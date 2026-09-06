@@ -48,7 +48,7 @@
 ### 1. 从 npm 安装桥插件
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@0.0.3"
+dsh plugin --profile web add -w "bridge-dsh@latest"
 ```
 
 ### 2. 下载 Chrome 扩展
@@ -89,7 +89,7 @@ pnpm build
 
 桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.0.3"`（其 release 也附了 `bridge-dsh-0.0.3.tgz`）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@latest"`（其 release 也附了 `bridge-dsh-0.0.3.tgz`）
 - `bridge-browser-0.0.2.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构

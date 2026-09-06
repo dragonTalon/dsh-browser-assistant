@@ -48,7 +48,7 @@ The bridge plugin is published to [npm](https://www.npmjs.com/package/bridge-dsh
 ### 1. Install the bridge plugin (from npm)
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@0.0.3"
+dsh plugin --profile web add -w "bridge-dsh@latest"
 ```
 
 ### 2. Download the Chrome extension
@@ -89,7 +89,7 @@ The two halves are released independently:
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.0.3"` (a `bridge-dsh-0.0.3.tgz` is also attached to its release)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@latest"` (a `bridge-dsh-0.0.3.tgz` is also attached to its release)
 - `bridge-browser-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout

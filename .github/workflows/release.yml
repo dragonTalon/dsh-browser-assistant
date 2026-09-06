@@ -75,7 +75,7 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
           artifact="release/bridge-dsh-${version}.tgz"
-          notes="bridge-dsh v${version} - auto-published to npm and GitHub from tag ${tag}. Install: dsh plugin --profile web add -w \"bridge-dsh@${version}\""
+          notes="bridge-dsh v${version} - auto-published to npm and GitHub from tag ${tag}. Install: dsh plugin --profile web add -w \"bridge-dsh@latest\""
           gh release create "$tag" "$artifact" --title "bridge-dsh v${version}" --notes "$notes"
 
   bridge-browser:
