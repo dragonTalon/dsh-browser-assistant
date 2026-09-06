@@ -1,5 +1,5 @@
 /**
- * `dsh-bs-plug`: token-authenticated WebSocket bridge for the
+ * `bridge-dsh`: token-authenticated WebSocket bridge for the
  * browser extension plus the text-only `browser_*` tool set.
  *
  * The bridge mounts its own upgrade route (`/ext/bridge`) on the host
@@ -13,7 +13,7 @@
  * Opt-in by design: nothing is registered unless this plugin appears in the
  * composition. No dsh core code is touched.
  *
- * @module dsh-bs-plug
+ * @module bridge-dsh
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -39,7 +39,7 @@ import {
 import { isRecord } from './host-api.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
-export const name = 'bridge-browser'
+export const name = 'bridge-dsh'
 
 /** Services required by this plugin. */
 export const inject = ['webServer', 'typertGateway', 'connection', 'tools']
@@ -74,7 +74,7 @@ type ResolvedConfig = Required<Omit<Config, 'token'>> & Pick<Config, 'token'>
 
 export function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`bridge-browser: ${name} must be a positive integer`)
+    throw new Error(`bridge-dsh: ${name} must be a positive integer`)
   }
 }
 
@@ -88,7 +88,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
   assertPositiveInteger('toolTimeoutMs', resolved.toolTimeoutMs)
   assertPositiveInteger('snapshotMaxChars', resolved.snapshotMaxChars)
   if (resolved.snapshotMaxChars < MIN_SNAPSHOT_MAX_CHARS) {
-    throw new Error(`bridge-browser: snapshotMaxChars must be at least ${MIN_SNAPSHOT_MAX_CHARS}`)
+    throw new Error(`bridge-dsh: snapshotMaxChars must be at least ${MIN_SNAPSHOT_MAX_CHARS}`)
   }
   assertPositiveInteger('maxInteractiveItems', resolved.maxInteractiveItems)
   return resolved
@@ -104,8 +104,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const gateway = ctx.get('typertGateway') as unknown as TypertGatewayLike | undefined
   const connection = ctx.get('connection') as unknown as HostConnectionLike | undefined
-  if (gateway === undefined) throw new Error('bridge-browser: dsh typertGateway service is required')
-  if (connection === undefined) throw new Error('bridge-browser: dsh connection service is required')
+  if (gateway === undefined) throw new Error('bridge-dsh: dsh typertGateway service is required')
+  if (connection === undefined) throw new Error('bridge-dsh: dsh connection service is required')
   await ensureRemoteEventSource(ctx, gateway)
 
   mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection))
@@ -132,8 +132,8 @@ function mountBridge(
     path: BRIDGE_PATH,
     handler: (req, socket, head) => { server.handleUpgrade(req, socket, head) },
   }
-  ctx.effect(() => ctx.webServer.registerUpgrade(route), 'bridge-browser: /ext/bridge upgrade route')
-  ctx.effect(() => () => server.close(), 'bridge-browser: bridge server')
+  ctx.effect(() => ctx.webServer.registerUpgrade(route), 'bridge-dsh: /ext/bridge upgrade route')
+  ctx.effect(() => () => server.close(), 'bridge-dsh: bridge server')
 
   // Zero-config discovery endpoint: the extension fetches this to learn the
   // bridge WebSocket URL without any manual configuration.
@@ -145,7 +145,7 @@ function mountBridge(
       res.end(JSON.stringify({ wsUrl: `ws://127.0.0.1:${ctx.webServer.port}${BRIDGE_PATH}` }))
     },
   }
-  ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-browser: /ext/bridge-config route')
+  ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-dsh: /ext/bridge-config route')
 
   ctx.effect(() => {
     const disposers = registerBrowserTools(ctx, server, {
@@ -154,7 +154,7 @@ function mountBridge(
       maxInteractiveItems: resolved.maxInteractiveItems,
     })
     return () => { for (const dispose of disposers.values()) dispose() }
-  }, 'bridge-browser: browser tools')
+  }, 'bridge-dsh: browser tools')
 
   ctx.logger.info(
     tokenRes.generated

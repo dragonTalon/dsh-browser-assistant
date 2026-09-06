@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e1b4b"/>
+      <stop offset="0.55" stop-color="#312e81"/>
+      <stop offset="1" stop-color="#5b21b6"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="0.38" cy="0.35" r="0.85">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="0.45" stop-color="#38bdf8"/>
+      <stop offset="0.8" stop-color="#0284c7"/>
+      <stop offset="1" stop-color="#075985"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="0.5" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#b45309"/>
+    </linearGradient>
+    <clipPath id="eyeClip">
+      <path d="M14,66 C38,34 90,34 114,66 C90,96 38,96 14,66 Z"/>
+    </clipPath>
+    <path id="spark" d="M0,-1 L0.16,-0.16 L1,0 L0.16,0.16 L0,1 L-0.16,0.16 L-1,0 L-0.16,-0.16 Z" fill="#ffffff"/>
+  </defs>
+
+  <!-- 背景 -->
+  <rect x="2" y="2" width="124" height="124" rx="30" fill="url(#bg)"/>
+
+  <!-- 眼睛后的柔光 -->
+  <ellipse cx="64" cy="66" rx="52" ry="40" fill="#67e8f9" opacity="0.10"/>
+
+  <!-- 挑起的眉毛（好奇） -->
+  <path d="M30,24 C48,11 72,8 90,14" fill="none" stroke="#f8fafc" stroke-width="6.5" stroke-linecap="round"/>
+
+  <!-- 眼睛 -->
+  <path d="M14,66 C38,34 90,34 114,66 C90,96 38,96 14,66 Z"
+        fill="#fdfdfe" stroke="#10122b" stroke-width="3.5"/>
+
+  <g clip-path="url(#eyeClip)">
+    <circle cx="64" cy="66" r="21" fill="url(#iris)"/>
+    <circle cx="67" cy="63.5" r="9.5" fill="#0b1220"/>
+    <circle cx="59" cy="60" r="4.6" fill="#ffffff" opacity="0.95"/>
+    <circle cx="71" cy="71" r="2.1" fill="#ffffff" opacity="0.8"/>
+  </g>
+
+  <!-- 单片眼镜 -->
+  <circle cx="64" cy="66" r="27.5" fill="#ffffff" fill-opacity="0.05"
+          stroke="url(#gold)" stroke-width="6.5"/>
+  <!-- 镜片反光 -->
+  <path d="M54,61 L67,48" stroke="#ffffff" stroke-width="5" stroke-linecap="round" opacity="0.45"/>
+  <path d="M70,49 L74.5,44.5" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- 链条 -->
+  <circle cx="78" cy="98" r="3.4" fill="url(#gold)"/>
+  <circle cx="86" cy="104" r="2.8" fill="url(#gold)"/>
+  <circle cx="93" cy="109" r="2.2" fill="url(#gold)"/>
+
+  <!-- 灵动的小星光 -->
+  <use href="#spark" transform="translate(105,27) scale(7.5)" opacity="0.9"/>
+  <use href="#spark" transform="translate(24,42) scale(4.5)" opacity="0.7"/>
+</svg>

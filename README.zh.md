@@ -1,13 +1,24 @@
-# dsh 浏览器助手
+<p align="center">
+  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser logo">
+</p>
 
-[English](README.md) | **中文**
+<h1 align="center">dsh 浏览器助手</h1>
+
+<p align="center">
+  <a href="README.md">English</a> | <b>中文</b>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/bridge-dsh"><img src="https://img.shields.io/npm/v/bridge-dsh?label=bridge-dsh" alt="npm version"></a>
+  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.0.2"><img src="https://img.shields.io/badge/bridge--browser-0.0.2-5b21b6" alt="extension version"></a>
+</p>
 
 让 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）读取、操作你正在使用的真实浏览器标签页：页面变成**纯文本结构化快照**，模型按编号寻址元素，登录态、会话、Cookie 全保留。
 
 一个 pnpm workspace，两半由一条 WebSocket 连接：
 
-- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`dsh-bs-plug` `0.0.3`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
-- **`packages/extension`** —— Chrome MV3 扩展，发布为 **`dsh-br` `0.0.2`**（service worker + content script + side panel）。
+- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`bridge-dsh` `0.0.3`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
+- **`packages/extension`** —— Chrome MV3 扩展，发布为 **`bridge-browser` `0.0.2`**（service worker + content script + side panel）。
 
 > DeepSeek 模型无视觉，整条链路**纯文本**：全程不截图。完整设计见 [docs/architecture.md](docs/architecture.md)。
 
@@ -32,19 +43,19 @@
 
 ## 安装
 
-桥插件发布在 [npm](https://www.npmjs.com/package/dsh-bs-plug)；Chrome 扩展以打包好的 zip 放在 [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases)。无需本地编译。
+桥插件发布在 [npm](https://www.npmjs.com/package/bridge-dsh)；Chrome 扩展以打包好的 zip 放在 [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases)。无需本地编译。
 
 ### 1. 从 npm 安装桥插件
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"
+dsh plugin --profile web add -w "bridge-dsh@0.0.3"
 ```
 
 ### 2. 下载 Chrome 扩展
 
 ```sh
-gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
-# → dsh-br-0.0.2.zip
+gh release download bridge-browser@0.0.2 --repo dragonTalon/dsh-browser-assistant
+# → bridge-browser-0.0.2.zip
 ```
 
 ### 3. 重启 dsh 并验证
@@ -57,7 +68,7 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. 加载扩展
 
-解压 `dsh-br-0.0.2.zip`，然后 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选解压出来的文件夹。打开任意 `http(s)` 页面，点扩展图标打开侧边栏，等「已连接 dsh」，即可对话。
+解压 `bridge-browser-0.0.2.zip`，然后 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选解压出来的文件夹。打开任意 `http(s)` 页面，点扩展图标打开侧边栏，等「已连接 dsh」，即可对话。
 
 ### 从源码构建（可选）
 
@@ -73,13 +84,13 @@ pnpm build
 
 | 产物 | 包名 | 版本 | Git tag |
 |---|---|---|---|
-| dsh bridge 插件 | `dsh-bs-plug` | `0.0.3` | `dsh-bs-plug@0.0.3` |
-| Chrome 扩展 | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
+| dsh bridge 插件 | `bridge-dsh` | `0.0.3` | `bridge-dsh@0.0.3` |
+| Chrome 扩展 | `bridge-browser` | `0.0.2` | `bridge-browser@0.0.2` |
 
-桥插件已发布到 npm：[`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
+桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `dsh-bs-plug` —— 从 npm 安装：`dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"`（其 release 也附了 `dsh-bs-plug-0.0.3.tgz`）
-- `dsh-br-0.0.2.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.0.3"`（其 release 也附了 `bridge-dsh-0.0.3.tgz`）
+- `bridge-browser-0.0.2.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构
 

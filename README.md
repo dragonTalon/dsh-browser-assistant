@@ -1,13 +1,24 @@
-# dsh Browser Assistant
+<p align="center">
+  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser logo">
+</p>
 
-**English** | [中文](README.zh.md)
+<h1 align="center">dsh Browser Assistant</h1>
+
+<p align="center">
+  <b>English</b> | <a href="README.zh.md">中文</a>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/bridge-dsh"><img src="https://img.shields.io/npm/v/bridge-dsh?label=bridge-dsh" alt="npm version"></a>
+  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.0.2"><img src="https://img.shields.io/badge/bridge--browser-0.0.2-5b21b6" alt="extension version"></a>
+</p>
 
 Let [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) read and operate the browser tab you already have open — pages become text-only structured snapshots, the model addresses elements by number, and your login state, session, and cookies stay intact.
 
 One pnpm workspace, two halves joined by one WebSocket:
 
-- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`dsh-bs-plug` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
-- **`packages/extension`** — the Chrome MV3 extension, released as **`dsh-br` `0.0.2`** (service worker + content script + side panel).
+- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
+- **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.0.2`** (service worker + content script + side panel).
 
 > DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/architecture.md](docs/architecture.md) for the full design.
 
@@ -32,19 +43,19 @@ Security model: the bridge carries its own bearer token; reads are auto-allowed,
 
 ## Install
 
-The bridge plugin is published to [npm](https://www.npmjs.com/package/dsh-bs-plug); the Chrome extension ships as a pre-built zip on [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases). No local compilation needed.
+The bridge plugin is published to [npm](https://www.npmjs.com/package/bridge-dsh); the Chrome extension ships as a pre-built zip on [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases). No local compilation needed.
 
 ### 1. Install the bridge plugin (from npm)
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"
+dsh plugin --profile web add -w "bridge-dsh@0.0.3"
 ```
 
 ### 2. Download the Chrome extension
 
 ```sh
-gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
-# → dsh-br-0.0.2.zip
+gh release download bridge-browser@0.0.2 --repo dragonTalon/dsh-browser-assistant
+# → bridge-browser-0.0.2.zip
 ```
 
 ### 3. Restart dsh and verify
@@ -57,7 +68,7 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. Load the extension
 
-Unzip `dsh-br-0.0.2.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+Unzip `bridge-browser-0.0.2.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
 
 ### Build from source (optional)
 
@@ -73,13 +84,13 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `dsh-bs-plug` | `0.0.3` | `dsh-bs-plug@0.0.3` |
-| Chrome extension | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
+| dsh bridge plugin | `bridge-dsh` | `0.0.3` | `bridge-dsh@0.0.3` |
+| Chrome extension | `bridge-browser` | `0.0.2` | `bridge-browser@0.0.2` |
 
-The bridge plugin is on npm: [`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
+The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `dsh-bs-plug` — install from npm: `dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"` (a `dsh-bs-plug-0.0.3.tgz` is also attached to its release)
-- `dsh-br-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.0.3"` (a `bridge-dsh-0.0.3.tgz` is also attached to its release)
+- `bridge-browser-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout
 

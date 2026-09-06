@@ -1,12 +1,12 @@
 # Browser bridge layer for the dsh `web` profile.
 #
-# Registered via `dsh plugin --profile web add -w "dsh-bs-plug@link:<path>"`.
+# Registered via `dsh plugin --profile web add -w "bridge-dsh@link:<path>"`.
 # On first boot the plugin generates a bearer token at ~/.dsh/ext-bridge-token
 # (chmod 0600); local extensions discover the bridge without manual token entry.
 
 - insert:
-    - id: bridge-browser
-      name: 'dsh-bs-plug'
+    - id: bridge-dsh
+      name: 'bridge-dsh'
       config:
         toolTimeoutMs: 90000
         snapshotMaxChars: 32000

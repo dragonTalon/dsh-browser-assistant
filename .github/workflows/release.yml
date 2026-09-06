@@ -3,15 +3,15 @@ name: Release plugins
 on:
   push:
     tags:
-      - 'dsh-bs-plug@*'
-      - 'dsh-br@*'
+      - 'bridge-dsh@*'
+      - 'bridge-browser@*'
 
 permissions:
   contents: write
 
 jobs:
-  dsh-bs-plug:
-    if: startsWith(github.ref_name, 'dsh-bs-plug@')
+  bridge-dsh:
+    if: startsWith(github.ref_name, 'bridge-dsh@')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -64,7 +64,7 @@ jobs:
           cp "$pkg/cordis.patch.yml" release/package/cordis.patch.yml
           cp -R "$pkg/lib" release/package/lib
           cp -R "$pkg/src" release/package/src
-          tar -czf "release/dsh-bs-plug-${version}.tgz" -C release package
+          tar -czf "release/bridge-dsh-${version}.tgz" -C release package
           rm -rf release/package
 
       - name: Create release
@@ -74,12 +74,12 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
-          artifact="release/dsh-bs-plug-${version}.tgz"
-          notes="dsh-bs-plug v${version} - auto-published to npm and GitHub from tag ${tag}. Install: dsh plugin --profile web add -w \"dsh-bs-plug@${version}\""
-          gh release create "$tag" "$artifact" --title "dsh-bs-plug v${version}" --notes "$notes"
+          artifact="release/bridge-dsh-${version}.tgz"
+          notes="bridge-dsh v${version} - auto-published to npm and GitHub from tag ${tag}. Install: dsh plugin --profile web add -w \"bridge-dsh@${version}\""
+          gh release create "$tag" "$artifact" --title "bridge-dsh v${version}" --notes "$notes"
 
-  dsh-br:
-    if: startsWith(github.ref_name, 'dsh-br@')
+  bridge-browser:
+    if: startsWith(github.ref_name, 'bridge-browser@')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -123,7 +123,7 @@ jobs:
           set -euo pipefail
           version="${GITHUB_REF_NAME##*@}"
           mkdir -p release
-          (cd packages/extension/dist && zip -q -r -X "../../../release/dsh-br-${version}.zip" .)
+          (cd packages/extension/dist && zip -q -r -X "../../../release/bridge-browser-${version}.zip" .)
 
       - name: Create release
         env:
@@ -132,6 +132,6 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
-          artifact="release/dsh-br-${version}.zip"
-          notes="dsh-br v${version} - auto-published from tag ${tag}. Load: chrome://extensions -> Developer mode -> Load unpacked (unzip dsh-br-${version}.zip first)."
-          gh release create "$tag" "$artifact" --title "dsh-br v${version}" --notes "$notes"
+          artifact="release/bridge-browser-${version}.zip"
+          notes="bridge-browser v${version} - auto-published from tag ${tag}. Load: chrome://extensions -> Developer mode -> Load unpacked (unzip bridge-browser-${version}.zip first)."
+          gh release create "$tag" "$artifact" --title "bridge-browser v${version}" --notes "$notes"

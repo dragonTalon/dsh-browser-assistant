@@ -7,7 +7,7 @@
   "packageManager": "pnpm@11.23.0",
   "type": "module",
   "scripts": {
-    "build": "pnpm --filter dsh-bs-plug run build && pnpm --filter dsh-br run build",
+    "build": "pnpm --filter bridge-dsh run build && pnpm --filter bridge-browser run build",
     "typecheck": "pnpm -r run typecheck"
   }
 }

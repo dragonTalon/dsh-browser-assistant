@@ -6,7 +6,7 @@
  * goes through Connection because it is a Gateway-owned RPC endpoint rather
  * than a Typert Remote method.
  *
- * @module dsh-bs-plug
+ * @module bridge-dsh
  */
 
 import type {

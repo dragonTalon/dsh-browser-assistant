@@ -36,6 +36,7 @@ ALIAS="--alias:@dsh-browser/protocol=../protocol/src/protocol.ts"
 # 4. static assets
 cp manifest.json dist/manifest.json
 cp panel/index.html dist/panel/index.html
+mkdir -p dist/icons && cp icons/icon16.png icons/icon32.png icons/icon48.png icons/icon128.png dist/icons/
 
 echo "extension built -> dist/"
 ls -la dist/

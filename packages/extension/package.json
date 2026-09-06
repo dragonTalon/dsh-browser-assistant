@@ -1,5 +1,5 @@
 {
-  "name": "dsh-br",
+  "name": "bridge-browser",
   "version": "0.0.2",
   "description": "Chrome MV3 extension: side panel + text-only read/operate of a controlled tab through the dsh browser bridge",
   "license": "MIT",
