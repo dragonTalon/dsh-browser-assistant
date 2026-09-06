@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "dsh-br",
+  "description": "dsh-br — dsh 的浏览器扩展:读取/总结当前网页,按编号点击、输入与导航;侧边栏对话,写操作需人工确认。",
+  "version": "0.0.1",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "webNavigation",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "dsh-br"
+  },
+  "side_panel": {
+    "default_path": "panel/index.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_origin_as_fallback": true
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*"
+  }
+}

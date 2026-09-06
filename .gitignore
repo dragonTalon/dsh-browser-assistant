@@ -1,0 +1,21 @@
+node_modules/
+lib/
+dist/
+dist-firefox/
+release/
+*.tsbuildinfo
+.DS_Store
+.idea/
+.claude/
+.vscode/
+.pnpm-store/
+
+# 日志与覆盖率
+*.log
+coverage/
+
+# 环境变量(不要提交真实密钥)
+.env
+.env.*
+!.env.example
+openspec/changes

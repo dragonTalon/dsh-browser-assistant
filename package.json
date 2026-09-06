@@ -1,0 +1,13 @@
+{
+  "name": "dsh-bs",
+  "version": "0.1.0",
+  "description": "dsh-bs (browser sidekick): dsh 的浏览器副手 — bridge 插件 + Chrome MV3 扩展,纯文本快照读取/操作当前标签页,写操作需人工确认",
+  "license": "MIT",
+  "private": true,
+  "packageManager": "pnpm@11.23.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter dsh-bs-plug run build && pnpm --filter dsh-br run build",
+    "typecheck": "pnpm -r run typecheck"
+  }
+}

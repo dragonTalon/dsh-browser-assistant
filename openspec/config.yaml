@@ -1,0 +1,73 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  项目: dsh-browser-assistant — 让 DeepSeek Harness (dsh) 读取/操作用户正在使用的真实浏览器标签页。
+  纯文本管线(模型无视觉,不截屏),页面渲染为结构化文本快照,模型按编号寻址元素,登录态全程保留。
+
+  技术栈: TypeScript strict (ES2022 / ESM / verbatimModuleSyntax / noUncheckedIndexedAccess)、
+  Node ^22、pnpm workspace (pnpm@11)、esbuild、Cordis 插件框架、Chrome MV3、ws。
+  本环境无 npm registry 访问:构建用本地 deepseek-harness checkout 里的 esbuild
+  (bash packages/bridge-dsh/build.sh、bash packages/extension/build.sh)。
+
+  三个包的分工(勿越界改动):
+  - packages/protocol    两端共享的零依赖线协议(protocol.ts 是唯一真相源,两端 import 同一份文件,帧结构不可漂移)
+  - packages/bridge-dsh  dsh 进程内的 Cordis 插件:挂 /ext/bridge WebSocket、注册 12 个 browser_* 工具;
+                         host-api.ts 窄接口隔离 dsh 版本差异,remote-host-api.ts 是唯一适配层
+  - packages/extension   Chrome MV3 扩展:background(桥客户端/RPC/审批)、content(唯一接触 DOM)、panel(对话 UI)
+
+  关键领域概念: 帧协议(hello 握手/rpc/tool.call/event)、事件代(EventGeneration,每个已认证连接一代)、
+  session/follow 订阅与断连回补、稳定元素编号、delta 快照、审批协调(读 auto-allow / 写 fail-closed)、
+  隐私遮蔽、不可信内容边界(防提示注入)。
+
+  安全铁律: 写操作一律 fail-closed 人工审批;token 恒定时间校验;特权操作对非回环来源即使有 token 也拒绝;
+  密码/卡号永不离开页面。任何变更不得削弱这些边界。
+
+  文档与工件语言: 中文(RFC 2119 关键词 SHALL/MUST/MUST NOT 保留英文)。
+  架构文档在 docs/(architecture.md、bridge-plugin.md、extension.md),改架构须同步更新。
+
+  验证手段: 仓库没有测试套件 — 只能 pnpm typecheck(tsc noEmit)+ 各包 build.sh 构建;
+  bridge 改动需重建 packages/bridge-dsh/lib/index.js 并重载 dsh 插件后在 Chrome 扩展面板实测。
+
+# Per-artifact rules (optional)
+rules:
+  proposal:
+    - "用中文撰写;按模板含 Why / What Changes / Capabilities / Impact 四节"
+    - "Why 必须给出可复现的问题证据(实测现象、时间、日志),不只是推断"
+    - "必须显式列出「非目标」,说明哪些相邻行为刻意不改及理由"
+    - "Capabilities 分 New / Modified;仓库尚无 specs 时 Modified 写「无」"
+    - "Impact 精确到文件路径(packages/...),说明协议帧是否变化、扩展是否需要重新构建"
+  specs:
+    - "用中文撰写;delta 格式为 ## ADDED Requirements → ### Requirement → #### Scenario + WHEN/THEN 列表"
+    - "Requirement 正文用 RFC 2119 关键词(SHALL/MUST/MUST NOT/SHOULD)约束系统行为,不用实现语言"
+    - "每个 Scenario 必须可判定: WHEN 给出具体前置(会话 S、seq 区间、连接状态),THEN 给出可观察结果"
+    - "一个能力一个目录(specs/<capability>/spec.md);能力名 kebab-case,命名站在扩展/桥接层外部视角"
+    - "描述「系统必须做什么」,不描述「代码怎么写」(那是 design 的职责)"
+  design:
+    - "仅当满足任一条件才创建: 跨模块、新外部依赖、安全/性能/迁移复杂度、存在需要先定的技术取舍"
+    - "Decisions 必须给出理由和被否决的备选方案(为什么选 X 不选 Y)"
+    - "Context 引用 proposal 不复述动机;引用已写好的 specs 不复述需求"
+    - "涉及事件流/重连/回补时必须说明与现有 reloadHistory 兜底的去重与边界"
+    - "涉及安全边界(审批/token/隐私)的决策单独成节并说明不削弱既有保证"
+  tasks:
+    - "任务按依赖顺序排列,checkbox 格式;每个任务落到具体文件(packages/...)"
+    - "改协议帧的任务必须先改 packages/protocol 再改两端,保持唯一真相源"
+    - "每个实现任务后跟验证任务: pnpm typecheck、对应 build.sh、以及无测试套件下的手工验证步骤"
+    - "最后一组任务固定包含: 构建 bridge 产物并重载 dsh 插件、Chrome 面板实测端到端行为"
+    - "只有 typecheck 与构建通过才算任务完成;不得用「应该可以」搪塞"
+
+# Per-operation guidance (optional)
+operations:
+  apply:
+    guidance:
+      - "严格按 tasks.md 顺序执行;一次任务一轮,完成后立即勾选并附简短结果说明"
+      - "仓库无测试套件: 每步用 pnpm typecheck 验证,bridge/extension 改动用各自 build.sh 验证可构建"
+      - "不越包改动: 协议改动只落在 packages/protocol,host 适配只落在 remote-host-api.ts"
+      - "安全边界(审批 fail-closed、token、隐私遮蔽、不可信内容)在任何实现分支中不得绕过"
+      - "架构行为有变时同步更新 docs/ 对应文档"
+  archive:
+    guidance:
+      - "归档前确认 pnpm typecheck 与相关 build.sh 全部通过,实现与 tasks.md 一致"
+      - "归档后核对 delta specs 已合入 openspec/specs/ 主规范且 requirement 无丢失"
+      - "在归档结果里简述: 合入了哪些能力、主 specs 的最终位置、遗留的非目标"

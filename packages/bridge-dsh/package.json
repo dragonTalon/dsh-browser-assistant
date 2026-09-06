@@ -1,0 +1,34 @@
+{
+  "name": "dsh-bs-plug",
+  "version": "0.0.1",
+  "description": "dsh bridge plugin: token-authenticated WebSocket carrier + text-only browser_* tools that drive the user's Chrome via the extension",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "bash build.sh"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "ws": "^8.21.0",
+    "@deepseek-ai/dsh-api-gateway": ">=0.1.2-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-api-remotes": ">=0.1.2-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-client-connection": ">=0.1.2-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-home-paths": ">=0.1.2-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.2-rc.1 <0.2.0",
+    "@deepseek-ai/dsh-tools": ">=0.1.2-rc.1 <0.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^6.0.3"
+  }
+}

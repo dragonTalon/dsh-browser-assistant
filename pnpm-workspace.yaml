@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+
+# dsh release lines carry incompatible branded peer types; keep resolution explicit.
+autoInstallPeers: false
+
+# Runtime packages that need install scripts (matching the dsh profile).
+allowBuilds:
+  esbuild: true

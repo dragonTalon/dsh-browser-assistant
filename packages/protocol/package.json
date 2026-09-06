@@ -1,0 +1,17 @@
+{
+  "name": "@dsh-browser/protocol",
+  "version": "0.1.0",
+  "description": "Shared zero-dependency wire protocol between the dsh bridge plugin and the browser extension",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "./src/protocol.ts",
+  "types": "./src/protocol.ts",
+  "exports": {
+    ".": "./src/protocol.ts",
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}
