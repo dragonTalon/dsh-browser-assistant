@@ -1,6 +1,6 @@
 {
   "name": "dsh-bs-plug",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "dsh bridge plugin: token-authenticated WebSocket carrier + text-only browser_* tools that drive the user's Chrome via the extension",
   "license": "MIT",
   "private": true,

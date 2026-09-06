@@ -1,6 +1,6 @@
 {
   "name": "dsh-br",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Chrome MV3 extension: side panel + text-only read/operate of a controlled tab through the dsh browser bridge",
   "license": "MIT",
   "private": true,

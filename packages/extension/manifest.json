@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "dsh-br",
   "description": "dsh-br — dsh 的浏览器扩展:读取/总结当前网页,按编号点击、输入与导航;侧边栏对话,写操作需人工确认。",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "minimum_chrome_version": "116",
   "permissions": [
     "sidePanel",
