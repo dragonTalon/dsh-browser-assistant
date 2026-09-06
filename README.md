@@ -103,6 +103,8 @@ docs/en/ docs/zh/       architecture & feature docs (EN / 中文)
 
 ## Docs
 
-- [docs/en/architecture.md](docs/en/architecture.md) — overall architecture and data flow
-- [docs/en/bridge-plugin.md](docs/en/bridge-plugin.md) — bridge plugin design
-- [docs/en/extension.md](docs/en/extension.md) — extension design
+Documentation is bilingual — every page has an **EN | 中文** switcher:
+
+- [Architecture](docs/en/architecture.md) · [中文](docs/zh/architecture.md)
+- [Bridge plugin](docs/en/bridge-plugin.md) · [中文](docs/zh/bridge-plugin.md)
+- [Chrome extension](docs/en/extension.md) · [中文](docs/zh/extension.md)

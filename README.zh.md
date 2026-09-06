@@ -103,6 +103,8 @@ docs/en/ docs/zh/       架构与功能文档（EN / 中文）
 
 ## 文档
 
-- [docs/zh/architecture.md](docs/zh/architecture.md) —— 整体架构与数据流
-- [docs/zh/bridge-plugin.md](docs/zh/bridge-plugin.md) —— bridge 插件设计
-- [docs/zh/extension.md](docs/zh/extension.md) —— 扩展设计
+文档为中英双语，每页都有 **EN | 中文** 切换：
+
+- [整体架构](docs/zh/architecture.md) · [English](docs/en/architecture.md)
+- [bridge 插件](docs/zh/bridge-plugin.md) · [English](docs/en/bridge-plugin.md)
+- [Chrome 扩展](docs/zh/extension.md) · [English](docs/en/extension.md)
