@@ -66,15 +66,8 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
           artifact="release/dsh-bs-plug-${version}.tgz"
-          gh release create "$tag" "$artifact" \
-            --title "dsh-bs-plug v${version}" \
-            --notes "Auto-published from tag \`${tag}\`.
-
-Install:
-
-\`\`\`sh
-dsh plugin --profile web add -w \"dsh-bs-plug@file:./dsh-bs-plug-${version}.tgz\"
-\`\`\`"
+          notes="dsh-bs-plug v${version} - auto-published from tag ${tag}. Install: dsh plugin --profile web add -w \"dsh-bs-plug@file:./dsh-bs-plug-${version}.tgz\""
+          gh release create "$tag" "$artifact" --title "dsh-bs-plug v${version}" --notes "$notes"
 
   dsh-br:
     if: startsWith(github.ref_name, 'dsh-br@')
@@ -131,8 +124,5 @@ dsh plugin --profile web add -w \"dsh-bs-plug@file:./dsh-bs-plug-${version}.tgz\
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
           artifact="release/dsh-br-${version}.zip"
-          gh release create "$tag" "$artifact" \
-            --title "dsh-br v${version}" \
-            --notes "Auto-published from tag \`${tag}\`.
-
-Load it via \`chrome://extensions\` → Developer mode → Load unpacked (unzip \`dsh-br-${version}.zip\` first)."
+          notes="dsh-br v${version} - auto-published from tag ${tag}. Load: chrome://extensions -> Developer mode -> Load unpacked (unzip dsh-br-${version}.zip first)."
+          gh release create "$tag" "$artifact" --title "dsh-br v${version}" --notes "$notes"
