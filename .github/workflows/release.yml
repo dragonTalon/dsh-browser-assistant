@@ -26,7 +26,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: 'https://registry.npmjs.org/'
           cache: pnpm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -44,6 +47,12 @@ jobs:
 
       - name: Build
         run: bash packages/bridge-dsh/build.sh
+
+      - name: Publish to npm
+        working-directory: packages/bridge-dsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
 
       - name: Package
         run: |
@@ -66,7 +75,7 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           version="${tag##*@}"
           artifact="release/dsh-bs-plug-${version}.tgz"
-          notes="dsh-bs-plug v${version} - auto-published from tag ${tag}. Install: dsh plugin --profile web add -w \"dsh-bs-plug@file:./dsh-bs-plug-${version}.tgz\""
+          notes="dsh-bs-plug v${version} - auto-published to npm and GitHub from tag ${tag}. Install: dsh plugin --profile web add -w \"dsh-bs-plug@${version}\""
           gh release create "$tag" "$artifact" --title "dsh-bs-plug v${version}" --notes "$notes"
 
   dsh-br:
