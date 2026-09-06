@@ -6,7 +6,7 @@ Let [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) re
 
 One pnpm workspace, two halves joined by one WebSocket:
 
-- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`dsh-bs-plug` `0.0.2`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
+- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`dsh-bs-plug` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
 - **`packages/extension`** — the Chrome MV3 extension, released as **`dsh-br` `0.0.2`** (service worker + content script + side panel).
 
 > DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/architecture.md](docs/architecture.md) for the full design.
@@ -37,7 +37,7 @@ The bridge plugin is published to [npm](https://www.npmjs.com/package/dsh-bs-plu
 ### 1. Install the bridge plugin (from npm)
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"
+dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"
 ```
 
 ### 2. Download the Chrome extension
@@ -73,12 +73,12 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `dsh-bs-plug` | `0.0.2` | `dsh-bs-plug@0.0.2` |
+| dsh bridge plugin | `dsh-bs-plug` | `0.0.3` | `dsh-bs-plug@0.0.3` |
 | Chrome extension | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
 
 The bridge plugin is on npm: [`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `dsh-bs-plug` — install from npm: `dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"` (a `dsh-bs-plug-0.0.2.tgz` is also attached to its release)
+- `dsh-bs-plug` — install from npm: `dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"` (a `dsh-bs-plug-0.0.3.tgz` is also attached to its release)
 - `dsh-br-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout

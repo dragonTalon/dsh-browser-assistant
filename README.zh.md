@@ -6,7 +6,7 @@
 
 一个 pnpm workspace，两半由一条 WebSocket 连接：
 
-- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`dsh-bs-plug` `0.0.2`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
+- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`dsh-bs-plug` `0.0.3`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
 - **`packages/extension`** —— Chrome MV3 扩展，发布为 **`dsh-br` `0.0.2`**（service worker + content script + side panel）。
 
 > DeepSeek 模型无视觉，整条链路**纯文本**：全程不截图。完整设计见 [docs/architecture.md](docs/architecture.md)。
@@ -37,7 +37,7 @@
 ### 1. 从 npm 安装桥插件
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"
+dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"
 ```
 
 ### 2. 下载 Chrome 扩展
@@ -73,12 +73,12 @@ pnpm build
 
 | 产物 | 包名 | 版本 | Git tag |
 |---|---|---|---|
-| dsh bridge 插件 | `dsh-bs-plug` | `0.0.2` | `dsh-bs-plug@0.0.2` |
+| dsh bridge 插件 | `dsh-bs-plug` | `0.0.3` | `dsh-bs-plug@0.0.3` |
 | Chrome 扩展 | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
 
 桥插件已发布到 npm：[`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `dsh-bs-plug` —— 从 npm 安装：`dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"`（其 release 也附了 `dsh-bs-plug-0.0.2.tgz`）
+- `dsh-bs-plug` —— 从 npm 安装：`dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"`（其 release 也附了 `dsh-bs-plug-0.0.3.tgz`）
 - `dsh-br-0.0.2.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构

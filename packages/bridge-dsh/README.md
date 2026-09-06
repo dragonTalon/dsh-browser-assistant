@@ -5,7 +5,7 @@ dsh 浏览器桥插件：token 鉴权的 WebSocket 桥 + 12 个 `browser_*` 工�
 ## Install
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"
+dsh plugin --profile web add -w "dsh-bs-plug@0.0.3"
 ```
 
 ## Requirements
