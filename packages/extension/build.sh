@@ -1,10 +1,21 @@
 #!/bin/bash
-# Build the extension with the locally available esbuild (npm is not
-# reachable in this environment). `@dsh-browser/protocol` is bundled in via
+# Build the extension with esbuild. `@dsh-browser/protocol` is bundled in via
 # alias; chrome.* APIs are ambient globals.
 set -euo pipefail
-ESBUILD=/Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild
 cd "$(dirname "$0")"
+
+# Resolve esbuild: explicit override -> workspace install (CI / pnpm install)
+# -> local deepseek-harness checkout (offline fallback on the dev machine).
+if [ -n "${ESBUILD:-}" ]; then
+  : # caller-provided
+elif [ -x ./node_modules/.bin/esbuild ]; then
+  ESBUILD=./node_modules/.bin/esbuild
+elif [ -x /Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild ]; then
+  ESBUILD=/Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild
+else
+  echo "error: esbuild not found (run pnpm install, or set ESBUILD)" >&2
+  exit 1
+fi
 
 rm -rf dist
 mkdir -p dist/panel

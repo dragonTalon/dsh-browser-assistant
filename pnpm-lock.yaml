@@ -23,7 +23,11 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
-  packages/extension: {}
+  packages/extension:
+    devDependencies:
+      esbuild:
+        specifier: ^0.24.0
+        version: 0.24.2
 
   packages/protocol: {}
 

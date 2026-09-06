@@ -1,0 +1,138 @@
+name: Release plugins
+
+on:
+  push:
+    tags:
+      - 'dsh-bs-plug@*'
+      - 'dsh-br@*'
+
+permissions:
+  contents: write
+
+jobs:
+  dsh-bs-plug:
+    if: startsWith(github.ref_name, 'dsh-bs-plug@')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.23.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME##*@}"
+          declared="$(node -p "require('./packages/bridge-dsh/package.json').version")"
+          if [ "$version" != "$declared" ]; then
+            echo "error: tag version ${version} != package.json version ${declared}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: bash packages/bridge-dsh/build.sh
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME##*@}"
+          pkg=packages/bridge-dsh
+          mkdir -p release/package
+          cp "$pkg/package.json" release/package/package.json
+          cp "$pkg/cordis.patch.yml" release/package/cordis.patch.yml
+          cp -R "$pkg/lib" release/package/lib
+          cp -R "$pkg/src" release/package/src
+          tar -czf "release/dsh-bs-plug-${version}.tgz" -C release package
+          rm -rf release/package
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag##*@}"
+          artifact="release/dsh-bs-plug-${version}.tgz"
+          gh release create "$tag" "$artifact" \
+            --title "dsh-bs-plug v${version}" \
+            --notes "Auto-published from tag \`${tag}\`.
+
+Install:
+
+\`\`\`sh
+dsh plugin --profile web add -w \"dsh-bs-plug@file:./dsh-bs-plug-${version}.tgz\"
+\`\`\`"
+
+  dsh-br:
+    if: startsWith(github.ref_name, 'dsh-br@')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.23.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME##*@}"
+          pkg_version="$(node -p "require('./packages/extension/package.json').version")"
+          manifest_version="$(node -p "require('./packages/extension/manifest.json').version")"
+          if [ "$version" != "$pkg_version" ]; then
+            echo "error: tag version ${version} != package.json version ${pkg_version}" >&2
+            exit 1
+          fi
+          if [ "$version" != "$manifest_version" ]; then
+            echo "error: tag version ${version} != manifest.json version ${manifest_version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: bash packages/extension/build.sh
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME##*@}"
+          mkdir -p release
+          (cd packages/extension/dist && zip -q -r -X "../../../release/dsh-br-${version}.zip" .)
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag##*@}"
+          artifact="release/dsh-br-${version}.zip"
+          gh release create "$tag" "$artifact" \
+            --title "dsh-br v${version}" \
+            --notes "Auto-published from tag \`${tag}\`.
+
+Load it via \`chrome://extensions\` → Developer mode → Load unpacked (unzip \`dsh-br-${version}.zip\` first)."
