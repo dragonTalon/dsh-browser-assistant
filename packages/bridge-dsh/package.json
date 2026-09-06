@@ -3,9 +3,13 @@
   "version": "0.0.2",
   "description": "dsh bridge plugin: token-authenticated WebSocket carrier + text-only browser_* tools that drive the user's Chrome via the extension",
   "license": "MIT",
-  "private": true,
   "type": "module",
   "main": "lib/index.js",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "src"
+  ],
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
