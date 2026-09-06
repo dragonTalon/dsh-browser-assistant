@@ -32,24 +32,19 @@ Security model: the bridge carries its own bearer token; reads are auto-allowed,
 
 ## Install
 
-Every [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) ships pre-built packages — no local compilation needed.
+The bridge plugin is published to [npm](https://www.npmjs.com/package/dsh-bs-plug); the Chrome extension ships as a pre-built zip on [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases). No local compilation needed.
 
-### 1. Download the pre-built packages
+### 1. Install the bridge plugin (from npm)
 
 ```sh
-# dsh bridge plugin (dsh-bs-plug)
-gh release download dsh-bs-plug@0.0.2 --repo dragonTalon/dsh-browser-assistant
-
-# Chrome extension (dsh-br)
-gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
+dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"
 ```
 
-This downloads `dsh-bs-plug-0.0.2.tgz` and `dsh-br-0.0.2.zip` into the current directory. Replace `0.0.2` with the version you want (see the Releases page for the full list).
-
-### 2. Register the bridge plugin into the web profile
+### 2. Download the Chrome extension
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"
+gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
+# → dsh-br-0.0.2.zip
 ```
 
 ### 3. Restart dsh and verify
@@ -81,9 +76,9 @@ The two halves are released independently:
 | dsh bridge plugin | `dsh-bs-plug` | `0.0.2` | `dsh-bs-plug@0.0.2` |
 | Chrome extension | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
 
-Each tag has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
+The bridge plugin is on npm: [`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `dsh-bs-plug-0.0.2.tgz` — the bridge plugin tarball; install with `dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"`
+- `dsh-bs-plug` — install from npm: `dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"` (a `dsh-bs-plug-0.0.2.tgz` is also attached to its release)
 - `dsh-br-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout

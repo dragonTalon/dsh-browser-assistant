@@ -32,24 +32,19 @@
 
 ## 安装
 
-每个 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) 都附带打包好的产物——无需本地编译。
+桥插件发布在 [npm](https://www.npmjs.com/package/dsh-bs-plug)；Chrome 扩展以打包好的 zip 放在 [GitHub Releases](https://github.com/dragonTalon/dsh-browser-assistant/releases)。无需本地编译。
 
-### 1. 下载打包好的产物
+### 1. 从 npm 安装桥插件
 
 ```sh
-# dsh 桥插件（dsh-bs-plug）
-gh release download dsh-bs-plug@0.0.2 --repo dragonTalon/dsh-browser-assistant
-
-# Chrome 扩展（dsh-br）
-gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
+dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"
 ```
 
-会把 `dsh-bs-plug-0.0.2.tgz` 与 `dsh-br-0.0.2.zip` 下载到当前目录。把 `0.0.2` 换成你要的版本即可（完整列表见 Releases 页面）。
-
-### 2. 把桥插件注册进 web profile
+### 2. 下载 Chrome 扩展
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"
+gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
+# → dsh-br-0.0.2.zip
 ```
 
 ### 3. 重启 dsh 并验证
@@ -81,9 +76,9 @@ pnpm build
 | dsh bridge 插件 | `dsh-bs-plug` | `0.0.2` | `dsh-bs-plug@0.0.2` |
 | Chrome 扩展 | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
 
-每个 tag 都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
+桥插件已发布到 npm：[`dsh-bs-plug`](https://www.npmjs.com/package/dsh-bs-plug)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `dsh-bs-plug-0.0.2.tgz` —— bridge 插件包；用 `dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"` 安装
+- `dsh-bs-plug` —— 从 npm 安装：`dsh plugin --profile web add -w "dsh-bs-plug@0.0.2"`（其 release 也附了 `dsh-bs-plug-0.0.2.tgz`）
 - `dsh-br-0.0.2.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构
