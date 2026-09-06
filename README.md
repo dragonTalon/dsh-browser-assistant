@@ -6,8 +6,8 @@ Let [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) re
 
 One pnpm workspace, two halves joined by one WebSocket:
 
-- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`dsh-bs-plug` `0.0.1`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
-- **`packages/extension`** — the Chrome MV3 extension, released as **`dsh-br` `0.0.1`** (service worker + content script + side panel).
+- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`dsh-bs-plug` `0.0.2`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
+- **`packages/extension`** — the Chrome MV3 extension, released as **`dsh-br` `0.0.2`** (service worker + content script + side panel).
 
 > DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/architecture.md](docs/architecture.md) for the full design.
 
@@ -32,19 +32,24 @@ Security model: the bridge carries its own bearer token; reads are auto-allowed,
 
 ## Install
 
-### 1. Build
+Every [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) ships pre-built packages — no local compilation needed.
 
-This environment has no npm registry access, so builds use esbuild from the local `deepseek-harness` checkout and resolve runtime deps via symlinks already set up at the workspace root:
+### 1. Download the pre-built packages
 
 ```sh
-bash packages/bridge-dsh/build.sh    # → packages/bridge-dsh/lib/index.js
-bash packages/extension/build.sh     # → packages/extension/dist/
+# dsh bridge plugin (dsh-bs-plug)
+gh release download dsh-bs-plug@0.0.2 --repo dragonTalon/dsh-browser-assistant
+
+# Chrome extension (dsh-br)
+gh release download dsh-br@0.0.2 --repo dragonTalon/dsh-browser-assistant
 ```
 
-### 2. Register the bridge into the web profile
+This downloads `dsh-bs-plug-0.0.2.tgz` and `dsh-br-0.0.2.zip` into the current directory. Replace `0.0.2` with the version you want (see the Releases page for the full list).
+
+### 2. Register the bridge plugin into the web profile
 
 ```sh
-dsh plugin --profile web add -w "dsh-bs-plug@link:$PWD/packages/bridge-dsh"
+dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"
 ```
 
 ### 3. Restart dsh and verify
@@ -57,7 +62,15 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. Load the extension
 
-`chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `packages/extension/dist`. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+Unzip `dsh-br-0.0.2.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+
+### Build from source (optional)
+
+```sh
+pnpm install --frozen-lockfile
+pnpm build
+# → packages/bridge-dsh/lib/index.js  and  packages/extension/dist/
+```
 
 ## Releases
 
@@ -65,13 +78,13 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `dsh-bs-plug` | `0.0.1` | `dsh-bs-plug@0.0.1` |
-| Chrome extension | `dsh-br` | `0.0.1` | `dsh-br@0.0.1` |
+| dsh bridge plugin | `dsh-bs-plug` | `0.0.2` | `dsh-bs-plug@0.0.2` |
+| Chrome extension | `dsh-br` | `0.0.2` | `dsh-br@0.0.2` |
 
-Each tag has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact:
+Each tag has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `dsh-bs-plug-0.0.1.tgz` — the bridge plugin tarball; install with `dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.1.tgz"`
-- `dsh-br-0.0.1.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `dsh-bs-plug-0.0.2.tgz` — the bridge plugin tarball; install with `dsh plugin --profile web add -w "dsh-bs-plug@file:./dsh-bs-plug-0.0.2.tgz"`
+- `dsh-br-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout
 
