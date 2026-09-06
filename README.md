@@ -20,7 +20,7 @@ One pnpm workspace, two halves joined by one WebSocket:
 - **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
 - **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.0.2`** (service worker + content script + side panel).
 
-> DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/architecture.md](docs/architecture.md) for the full design.
+> DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/en/architecture.md](docs/en/architecture.md) for the full design.
 
 ## Capabilities
 
@@ -98,11 +98,11 @@ The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge
 packages/protocol/     shared zero-dependency wire protocol (single source of truth)
 packages/bridge-dsh/   dsh bridge plugin (Cordis)
 packages/extension/    Chrome MV3 extension (background / content / panel)
-docs/                  architecture & feature docs
+docs/en/ docs/zh/       architecture & feature docs (EN / 中文)
 ```
 
 ## Docs
 
-- [docs/architecture.md](docs/architecture.md) — overall architecture and data flow
-- [docs/bridge-plugin.md](docs/bridge-plugin.md) — bridge plugin design
-- [docs/extension.md](docs/extension.md) — extension design
+- [docs/en/architecture.md](docs/en/architecture.md) — overall architecture and data flow
+- [docs/en/bridge-plugin.md](docs/en/bridge-plugin.md) — bridge plugin design
+- [docs/en/extension.md](docs/en/extension.md) — extension design

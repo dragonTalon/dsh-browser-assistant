@@ -1,3 +1,5 @@
+> [English](../en/bridge-plugin.md) | [中文](../zh/bridge-plugin.md)
+
 # dsh bridge 插件（packages/bridge-dsh）
 
 一个 **Cordis 插件**，运行在 dsh 进程内。它不修改 dsh 核心，只有出现在 profile 的 bundle 列表里才生效（opt-in）。作用是两件事：**挂 WebSocket 桥** + **注册 `browser_*` 工具**。

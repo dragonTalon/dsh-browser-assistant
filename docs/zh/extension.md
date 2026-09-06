@@ -1,3 +1,5 @@
+> [English](../en/extension.md) | [中文](../zh/extension.md)
+
 # Chrome 扩展（packages/extension）
 
 MV3 扩展，三段式：**service worker（控制中心）+ content script（碰 DOM 的唯一部分）+ side panel（对话 UI）**。它不直接连 dsh 的会话，只经后台统一转发。

@@ -1,3 +1,5 @@
+> [English](../en/architecture.md) | [中文](../zh/architecture.md)
+
 # 整体架构
 
 dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）读取、操作用户**正在使用的真实浏览器标签页**。页面被渲染成纯文本结构化快照，模型按编号寻址元素，登录态/Cookie 全程保留。

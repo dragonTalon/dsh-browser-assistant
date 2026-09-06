@@ -20,7 +20,7 @@
 - **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`bridge-dsh` `0.0.3`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
 - **`packages/extension`** —— Chrome MV3 扩展，发布为 **`bridge-browser` `0.0.2`**（service worker + content script + side panel）。
 
-> DeepSeek 模型无视觉，整条链路**纯文本**：全程不截图。完整设计见 [docs/architecture.md](docs/architecture.md)。
+> DeepSeek 模型无视觉，整条链路**纯文本**：全程不截图。完整设计见 [docs/zh/architecture.md](docs/zh/architecture.md)。
 
 ## 能力
 
@@ -98,11 +98,11 @@ pnpm build
 packages/protocol/     共享零依赖帧协议（唯一真相源）
 packages/bridge-dsh/   dsh bridge 插件（Cordis）
 packages/extension/    Chrome MV3 扩展（background / content / panel）
-docs/                  架构与功能文档
+docs/en/ docs/zh/       架构与功能文档（EN / 中文）
 ```
 
 ## 文档
 
-- [docs/architecture.md](docs/architecture.md) —— 整体架构与数据流
-- [docs/bridge-plugin.md](docs/bridge-plugin.md) —— bridge 插件设计
-- [docs/extension.md](docs/extension.md) —— 扩展设计
+- [docs/zh/architecture.md](docs/zh/architecture.md) —— 整体架构与数据流
+- [docs/zh/bridge-plugin.md](docs/zh/bridge-plugin.md) —— bridge 插件设计
+- [docs/zh/extension.md](docs/zh/extension.md) —— 扩展设计
