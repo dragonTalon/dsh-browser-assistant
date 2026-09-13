@@ -17,23 +17,28 @@ else
   exit 1
 fi
 
-# Resolve markdown rendering deps (marked / dompurify), same offline fallback
-# as esbuild: explicit override -> local deepseek-harness checkout .pnpm store.
+# Resolve markdown rendering deps (marked / dompurify), same fallback order as
+# esbuild: explicit override -> workspace install (CI / pnpm install) -> local
+# deepseek-harness checkout .pnpm store (offline dev machine).
 if [ -n "${MARKED_ESM:-}" ]; then
   : # caller-provided
+elif [ -f ./node_modules/marked/lib/marked.esm.js ]; then
+  MARKED_ESM=./node_modules/marked/lib/marked.esm.js
 elif [ -f /Users/dragon/Documents/github/deepseek-harness/node_modules/.pnpm/marked@16.4.2/node_modules/marked/lib/marked.esm.js ]; then
   MARKED_ESM=/Users/dragon/Documents/github/deepseek-harness/node_modules/.pnpm/marked@16.4.2/node_modules/marked/lib/marked.esm.js
 else
-  echo "error: marked not found (set MARKED_ESM)" >&2
+  echo "error: marked not found (run pnpm install, or set MARKED_ESM)" >&2
   exit 1
 fi
 
 if [ -n "${DOMPURIFY_ESM:-}" ]; then
   : # caller-provided
+elif [ -f ./node_modules/dompurify/dist/purify.es.mjs ]; then
+  DOMPURIFY_ESM=./node_modules/dompurify/dist/purify.es.mjs
 elif [ -f /Users/dragon/Documents/github/deepseek-harness/node_modules/.pnpm/dompurify@3.4.11/node_modules/dompurify/dist/purify.es.mjs ]; then
   DOMPURIFY_ESM=/Users/dragon/Documents/github/deepseek-harness/node_modules/.pnpm/dompurify@3.4.11/node_modules/dompurify/dist/purify.es.mjs
 else
-  echo "error: dompurify not found (set DOMPURIFY_ESM)" >&2
+  echo "error: dompurify not found (run pnpm install, or set DOMPURIFY_ESM)" >&2
   exit 1
 fi
 
