@@ -368,7 +368,7 @@ chrome.runtime.onConnect.addListener((port) => {
         if (rpcMsg.method === 'session.prompt' && activePage !== null) {
           const payload = (typeof rpcMsg.payload === 'object' && rpcMsg.payload !== null ? rpcMsg.payload : {}) as { content?: unknown[] }
           if (Array.isArray(payload.content)) {
-            const pageCtx = `[浏览器上下文] 用户当前停留的页面: ${activePage.title || '(无标题)'} (${activePage.url})`
+            const pageCtx = `[网页描述]：${activePage.title || '(无标题)'} (${activePage.url})\n`
             payload.content = [{ type: 'text', text: pageCtx }, ...payload.content]
           }
         }

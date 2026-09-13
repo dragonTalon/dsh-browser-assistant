@@ -73,6 +73,22 @@ function elementText(el: Element): string {
 }
 
 /**
+ * Direct text of an element: only its own child text nodes, excluding the
+ * text of descendant elements. Container elements (a wrapping div) typically
+ * have no direct text, so this returns an empty string — unlike `textContent`,
+ * which would collapse the whole subtree into one long string.
+ * @param el - element to read.
+ * @returns normalized direct text (empty for pure containers).
+ */
+export function directText(el: Element): string {
+  let text = ''
+  for (const node of el.childNodes) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.textContent ?? ''
+  }
+  return clean(text)
+}
+
+/**
  * Truncate text at a character budget, marking the cut.
  * @param text - source text.
  * @param max - maximum characters.

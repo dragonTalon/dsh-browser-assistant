@@ -10,6 +10,23 @@
 
 import type { BridgeState } from '../background/bridge.ts'
 import { wrapUntrustedContent } from '../security/untrusted.ts'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+
+/**
+ * 把 assistant 回复的 Markdown 渲染为受限 HTML。
+ * 消毒 MUST 先于写入 DOM：模型输出是半可信内容（可被页面诱导做提示注入）。
+ */
+function renderMarkdown(md: string): string {
+  return DOMPurify.sanitize(marked.parse(md) as string, {
+    ALLOWED_TAGS: [
+      'p', 'br', 'strong', 'em', 'del', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'a', 'hr',
+      'table', 'thead', 'tbody', 'tr', 'th', 'td', 'img',
+    ],
+    ALLOWED_ATTR: ['href', 'title', 'src', 'alt'],
+  })
+}
 
 // 后台 service worker 被挂起后 port 会断开；这里做惰性重连，post 时若断开则重连一次。
 let port: chrome.runtime.Port | null = null
@@ -108,7 +125,11 @@ const optionMap = new Map<string, { provider: string; model: string }>()
 function appendRow(kind: 'user' | 'assistant' | 'system', text: string): HTMLElement {
   const row = document.createElement('div')
   row.className = `row ${kind}`
-  row.textContent = text
+  if (kind === 'assistant') {
+    row.innerHTML = renderMarkdown(text)
+  } else {
+    row.textContent = text
+  }
   logEl.appendChild(row)
   // turn 进行中保持指示行在对话末尾：新内容行插入到它上方。
   if (workingRow !== null) logEl.appendChild(workingRow)
@@ -117,9 +138,11 @@ function appendRow(kind: 'user' | 'assistant' | 'system', text: string): HTMLEle
 }
 
 let assistantRow: HTMLElement | null = null
+let assistantBuffer = ''
 function appendAssistantText(text: string): void {
   if (assistantRow === null) assistantRow = appendRow('assistant', '')
-  assistantRow.textContent += text
+  assistantBuffer += text
+  assistantRow.innerHTML = renderMarkdown(assistantBuffer)
   logEl.scrollTop = logEl.scrollHeight
 }
 
@@ -190,6 +213,7 @@ function handleSessionEvent(event: unknown): void {
       const text = extractTextFromBlocks((ev.data as { content?: unknown } | undefined)?.content)
       if (text.trim() !== '') {
         assistantRow = null
+        assistantBuffer = ''
         appendRow('user', text)
       }
       break
@@ -200,6 +224,7 @@ function handleSessionEvent(event: unknown): void {
       const text = extractTextFromBlocks((ev.data?.message as { content?: unknown } | undefined)?.content)
       if (text.trim() !== '') {
         assistantRow = null
+        assistantBuffer = ''
         appendRow('assistant', text)
       }
       break
@@ -218,6 +243,7 @@ function handleSessionEvent(event: unknown): void {
     case 'turn/end': {
       setWorking(false)
       assistantRow = null
+      assistantBuffer = ''
       break
     }
     case 'model/selection': {
@@ -307,6 +333,7 @@ async function reloadHistory(): Promise<void> {
     // 清空对话并整体重渲染（简单可靠）。
     while (logEl.firstChild !== null) logEl.removeChild(logEl.firstChild)
     assistantRow = null
+    assistantBuffer = ''
     setWorking(false)
     for (const entry of page.events) {
       const ev = (entry as { event?: unknown } | undefined)?.event
@@ -709,11 +736,17 @@ function formatRegionElement(el: unknown): string {
   return `<${tag}${id}${cls}${role}>${name}${coords}`
 }
 
-function buildRegionPromptText(intent: string, elements: unknown[]): string {
+/** [截图描述] 段：框选区域说明 + 元素清单（保持不可信包裹，D8）。 */
+function buildRegionScreenshotText(elements: unknown[]): string {
   const list = elements.map(formatRegionElement).join('\n')
   const wrapped = wrapUntrustedContent(list, 8_000)
+  return `[截图描述]：用户框选了当前页面的一块区域，截图见随附图片；区域内 DOM 元素清单如下：\n${wrapped}`
+}
+
+/** [用户问题] 段：用户意图，空意图用固定文案兜底（D8）。前导换行保证与截图/上一段分行。 */
+function buildRegionQuestionText(intent: string): string {
   const intentText = intent.trim() === '' ? '(未补充具体意图)' : intent.trim()
-  return `[用户框选了当前页面的一块区域]\n用户意图：${intentText}\n\n选区内元素清单：\n${wrapped}`
+  return `\n[用户问题]：${intentText}`
 }
 
 function isImageUnsupported(error: unknown): boolean {
@@ -769,21 +802,29 @@ async function sendRegion(intent: string): Promise<void> {
   // 会话不可用时保留附件，让用户连上后能重发同一张截图。
   if (!await ensureSession()) return
   const region = pendingRegion
-  const text = buildRegionPromptText(intent, region.elements)
-  const content: unknown[] = [{ type: 'text', text }]
+  // D8 三段式：截图描述（含元素清单）→ 截图 → 用户问题；意图移到最后。
+  const screenshotText = buildRegionScreenshotText(region.elements)
+  const questionText = buildRegionQuestionText(intent)
+  const content: unknown[] = [{ type: 'text', text: screenshotText }]
   if (region.mediaType !== '' && region.data !== '') {
     content.push({ type: 'image', mediaType: region.mediaType, data: region.data, name: 'region.jpeg' })
   }
+  content.push({ type: 'text', text: questionText })
+  // 降级路径用：不含图片的两段文本。
+  const textOnlyContent: unknown[] = [
+    { type: 'text', text: screenshotText },
+    { type: 'text', text: questionText },
+  ]
   clearRegionAttachment()
   setWorking(true)
   try {
     await rpc('session.prompt', { sessionId, mode: 'queue', content })
   } catch (error: unknown) {
     if (isImageUnsupported(error)) {
-      // 非视觉模型：剥离图片，仅以元素清单重发一次。
+      // 非视觉模型：剥离图片，仅以元素清单+意图重发一次。
       appendRow('system', '当前模型无视觉，已降级为元素描述。')
       try {
-        await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
+        await rpc('session.prompt', { sessionId, mode: 'queue', content: textOnlyContent })
       } catch (retryError: unknown) {
         setWorking(false)
         appendRow('system', `发送失败: ${retryError instanceof Error ? retryError.message : String(retryError)}`)

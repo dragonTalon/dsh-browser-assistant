@@ -16,7 +16,7 @@
  */
 
 import { MAX_REGION_ELEMENTS } from '@dsh-browser/protocol'
-import { accessibleName, isVisible, truncate } from './extract.ts'
+import { accessibleName, directText, isVisible, truncate } from './extract.ts'
 import { isSensitiveField } from './privacy.ts'
 
 /** Selection rectangle in viewport CSS pixels. */
@@ -55,6 +55,7 @@ const DESCRIBABLE_TAGS = new Set([
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'label', 'summary',
   'form', 'nav', 'header', 'footer', 'section', 'article', 'table',
   'canvas', 'video', 'svg', 'figure', 'figcaption',
+  'code', 'pre', 'blockquote', 'dl', 'dt', 'dd',
 ])
 
 const OVERLAY_ID = '__dshRegionOverlay__'
@@ -155,15 +156,17 @@ export function startRegionSelection(onDone: (selection: RegionSelection | null)
 /** Whether an element is worth a line in the region description. */
 function isDescribable(el: HTMLElement): boolean {
   if (el.id !== '') return true
-  if (typeof el.className === 'string' && el.className.trim() !== '') return true
-  if (el.getAttribute('role') !== null) return true
+  const role = el.getAttribute('role')
+  if (role !== null && role !== '') return true
   return DESCRIBABLE_TAGS.has(el.tagName.toLowerCase())
 }
 
 /** Build the structured description for one intersecting element. */
 function describe(el: HTMLElement, rect: RegionRect): RegionElement {
   const r = el.getBoundingClientRect()
-  const name = isSensitiveField(el) ? `${accessibleName(el)} (value masked)` : accessibleName(el)
+  const isSemantic = DESCRIBABLE_TAGS.has(el.tagName.toLowerCase())
+  const rawName = isSemantic ? accessibleName(el) : directText(el)
+  const name = isSensitiveField(el) ? `${rawName} (value masked)` : rawName
   const role = el.getAttribute('role')
   const classes = typeof el.className === 'string' ? el.className : ''
   return {
@@ -184,6 +187,7 @@ function describeRegionElements(rect: RegionRect): RegionElement[] {
   const result: RegionElement[] = []
   for (const el of document.querySelectorAll('body *')) {
     if (!(el instanceof HTMLElement)) continue
+    if (el.id === OVERLAY_ID || el.id === BOX_ID) continue
     const r = el.getBoundingClientRect()
     if (r.width === 0 || r.height === 0) continue
     const intersects = r.right >= rect.x
