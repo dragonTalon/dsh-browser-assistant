@@ -22,7 +22,7 @@
  * @module
  */
 
-import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, isRespondResult, type BridgeCaps, type RespondResult } from '@dsh-browser/protocol'
+import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, buildPageContext, isRespondResult, type BridgeCaps, type RespondResult, type ToolError } from '@dsh-browser/protocol'
 import type { ServerFrame } from '@dsh-browser/protocol'
 import { BridgeClient, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
@@ -242,7 +242,7 @@ async function gatewayRpc(method: string, payload: unknown): Promise<unknown> {
 }
 
 /** Resolve the controlled tab, binding to the active tab on first use. */
-async function resolveControlledTab(): Promise<{ tab: chrome.tabs.Tab } | { error: { code: string; message: string } }> {
+async function resolveControlledTab(): Promise<{ tab: chrome.tabs.Tab } | { error: ToolError }> {
   if (controlledTabId === null) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
@@ -294,8 +294,8 @@ function routeToolCall(call: ToolCall): void {
         (tab) => { if (tab.id !== undefined) { controlledTabId = tab.id; return true } return false },
         () => controlledTabId !== null && controlledTabId !== undefined,
       ))
-    : resolveControlledTab().then((target) => 'error' in target
-      ? target
+    : resolveControlledTab().then((target): Promise<ToolAnswer> => 'error' in target
+      ? Promise.resolve({ ok: false, error: target.error })
       : dispatchToolCall(
           call, settings.sharePageContent, budget,
           (prompt) => authorizeToolCall(prompt, controller.signal, target.tab.windowId, call.sessionId),
@@ -368,7 +368,7 @@ chrome.runtime.onConnect.addListener((port) => {
         if (rpcMsg.method === 'session.prompt' && activePage !== null) {
           const payload = (typeof rpcMsg.payload === 'object' && rpcMsg.payload !== null ? rpcMsg.payload : {}) as { content?: unknown[] }
           if (Array.isArray(payload.content)) {
-            const pageCtx = `[网页描述]：${activePage.title || '(无标题)'} (${activePage.url})\n`
+            const pageCtx = buildPageContext(activePage.title, activePage.url)
             payload.content = [{ type: 'text', text: pageCtx }, ...payload.content]
           }
         }

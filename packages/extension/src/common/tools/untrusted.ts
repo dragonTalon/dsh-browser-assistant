@@ -5,6 +5,9 @@
  * closing boundary. This is defense in depth only: user approval in the
  * background service worker remains the enforcement boundary for actions.
  *
+ * Shared tool: used by the background snapshot framing and the panel region
+ * prompt, so it lives in the common tools area rather than per-feature code.
+ *
  * @module
  */
 

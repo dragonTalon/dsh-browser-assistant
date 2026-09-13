@@ -10,15 +10,15 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/bridge-dsh"><img src="https://img.shields.io/npm/v/bridge-dsh?label=bridge-dsh" alt="npm version"></a>
-  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.0.2"><img src="https://img.shields.io/badge/bridge--browser-0.0.2-5b21b6" alt="extension version"></a>
+  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.1.0"><img src="https://img.shields.io/badge/bridge--browser-0.1.0-5b21b6" alt="extension version"></a>
 </p>
 
 Let [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) read and operate the browser tab you already have open — pages become text-only structured snapshots, the model addresses elements by number, and your login state, session, and cookies stay intact.
 
 One pnpm workspace, two halves joined by one WebSocket:
 
-- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
-- **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.0.2`** (service worker + content script + side panel).
+- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.1.0`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
+- **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.1.0`** (service worker + content script + side panel).
 
 > The model tool pipeline is **text-only** — pages become structured text snapshots, tools never capture screenshots. Separately, a **user-initiated** drag-select in the panel can send a cropped region screenshot to a **vision-capable** model. See [docs/en/architecture.md](docs/en/architecture.md) for the full design.
 
@@ -56,8 +56,8 @@ dsh plugin --profile web add -w "bridge-dsh@latest"
 ### 2. Download the Chrome extension
 
 ```sh
-gh release download bridge-browser@0.0.2 --repo dragonTalon/dsh-browser-assistant
-# → bridge-browser-0.0.2.zip
+gh release download bridge-browser@0.1.0 --repo dragonTalon/dsh-browser-assistant
+# → bridge-browser-0.1.0.zip
 ```
 
 ### 3. Restart dsh and verify
@@ -70,7 +70,7 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. Load the extension
 
-Unzip `bridge-browser-0.0.2.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+Unzip `bridge-browser-0.1.0.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
 
 ### Build from source (optional)
 
@@ -94,13 +94,13 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `bridge-dsh` | `0.0.3` | `bridge-dsh@0.0.3` |
-| Chrome extension | `bridge-browser` | `0.0.2` | `bridge-browser@0.0.2` |
+| dsh bridge plugin | `bridge-dsh` | `0.1.0` | `bridge-dsh@0.1.0` |
+| Chrome extension | `bridge-browser` | `0.1.0` | `bridge-browser@0.1.0` |
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@latest"` (a `bridge-dsh-0.0.3.tgz` is also attached to its release)
-- `bridge-browser-0.0.2.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@latest"` (a `bridge-dsh-0.1.0.tgz` is also attached to its release)
+- `bridge-browser-0.1.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout
 

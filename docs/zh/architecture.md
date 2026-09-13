@@ -21,7 +21,9 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 │  packages/extension（Chrome MV3 扩展）                                  │
 │    background/  service worker：桥客户端、RPC、工具分发、审批、状态日志  │
 │    content/     页面侧（唯一接触 DOM）：快照/点击/输入/隐私遮蔽           │
-│    panel/       侧边栏：对话、状态、日志、审批、问答                      │
+│    panel/       侧边栏：对话、模型选择、框选截图、Markdown、              │
+│                 状态/日志、审批、问答（8 个薄模块）                       │
+│    common/      共享无状态工具 + UI 组件（可复用）                        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -34,6 +36,8 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 | `packages/extension` | Chrome | 执行浏览器操作、呈现对话、用户审批 | 是 |
 
 **协议是唯一真相源**：`protocol.ts` 被两端 import 同一份文件，帧结构不可能漂移；`isServerFrame`/`isClientFrame` 类型守卫把收发方向在类型层面分开。
+
+**代码组织与类型安全**：扩展拆为 `background/`（控制中心）、`content/`（唯一接触 DOM）、`panel/`（8 个单一职责模块上方的薄组装根）、以及跨界面复用的共享 `common/`（`tools/` + `ui/`）。三个包均用 `tsc` 做类型检查——扩展自带本地 `chrome.d.ts` + `vendor.d.ts`（离线环境无 `@types/chrome`）。
 
 ## 端到端数据流
 
@@ -54,4 +58,5 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 | **fail-closed 审批** | 读默认 auto；写操作一律审批，无面板即超时拒绝 | 安全边界在扩展后台，不赌模型自觉 |
 | **稳定元素编号** | WeakMap 一次性分配 id + `data-dsh-el` 标记 | 跨快照可寻址，避免重渲染后点错 |
 | **敏感字段永不外泄** | 密码/卡号/CVV 掩码为 `••••`；页面文本包一层不可信标记 | 快照是文本唯一出口，必须在这里挡住 |
+| **共享公共区 + 类型化面板** | UI 组件与工具只在 `common/` 存一份；面板是 8 个模块上方的组装根；`tsc` 门禁三个包 | 不产生 god-module；复用而非重写；类型错误在发布前被拦截 |
 | **MV3 生存性** | 面板 20s 心跳 + 30s alarm 重连 + 断开恢复 | SW 空闲挂起会掐 WebSocket，必须对抗 |

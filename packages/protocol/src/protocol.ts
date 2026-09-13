@@ -281,3 +281,8 @@ function isRespondError(value: unknown): value is Extract<RespondResult, { ok: f
     && (value as Record<string, unknown>).details !== null
     && !Array.isArray((value as Record<string, unknown>).details)
 }
+
+// Prompt assembly vocabulary lives in prompt.ts but re-exports here so both the
+// extension and the bridge import it from the single `@dsh-browser/protocol`
+// surface (matching how the extension build aliases that specifier).
+export * from './prompt.ts'

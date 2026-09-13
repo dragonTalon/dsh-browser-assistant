@@ -23,7 +23,9 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 │                 approval, status logging                               │
 │    content/     page side (the only DOM-touching part): snapshot/click/│
 │                 input/privacy masking                                  │
-│    panel/       side panel: chat, status, logs, approval, Q&A          │
+│    panel/       side panel: chat, model selection, region capture,     │
+│                 markdown, status/logs, approval, Q&A (8 thin modules)  │
+│    common/      shared stateless tools + UI components (reusable)      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -36,6 +38,8 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 | `packages/extension` | Chrome | perform browser actions, render chat, user approval | yes |
 
 **The protocol is the single source of truth**: both sides import the same `protocol.ts`, so frame structures cannot drift; the `isServerFrame`/`isClientFrame` type guards separate send/receive directions at the type level.
+
+**Code organization & type safety**: the extension splits into `background/` (control center), `content/` (the only DOM-touching part), `panel/` (a thin composition root over 8 single-responsibility modules), and a shared `common/` (`tools/` + `ui/`) reused across surfaces. All three packages type-check with `tsc` — the extension ships a local `chrome.d.ts` + `vendor.d.ts` because no `@types/chrome` is available offline.
 
 ## End-to-end data flow
 
@@ -56,4 +60,5 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 | **Fail-closed approval** | reads default to auto; every write requires approval, no panel → timeout reject | the security boundary lives in the extension background, not in model goodwill |
 | **Stable element numbering** | WeakMap one-time id assignment + `data-dsh-el` marker | addressable across snapshots, avoids mis-clicks after re-render |
 | **Sensitive fields never leak** | passwords/card numbers/CVV masked as `••••`; page text wrapped in an untrusted marker | the snapshot is the only text exit, must be blocked here |
+| **Shared common area, typed panel** | UI components + tools live once in `common/`; the panel is a composition root over 8 modules; `tsc` gates all three packages | no god-module; reuse instead of rewrite; type errors are caught before shipping |
 | **MV3 survivability** | panel 20s heartbeat + 30s alarm reconnect + disconnect recovery | SW idle suspension kills WebSockets, must be counteracted |

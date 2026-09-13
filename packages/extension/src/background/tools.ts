@@ -17,7 +17,7 @@ import {
   listTabFrames,
   type TabFrame,
 } from './frames.ts'
-import { wrapUntrustedContent } from '../security/untrusted.ts'
+import { wrapUntrustedContent } from '../common/tools/untrusted.ts'
 import { approvalPromptForCall } from './authorization.ts'
 import { waitForNextDocumentReady } from './navigation.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'

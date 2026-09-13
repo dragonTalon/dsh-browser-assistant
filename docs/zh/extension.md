@@ -10,7 +10,7 @@ MV3 扩展，三段式：**service worker（控制中心）+ content script（�
 |---|---|---|
 | **background/** | 桥客户端（发现/重连/心跳）、RPC 转发、工具分发、审批协调、当前页追踪、日志 | `index.ts`(装配)、`bridge.ts`、`tools.ts`、`authorization.ts`、`approval-coordinator.ts` |
 | **content/** | 页面→文本快照、执行点击/输入/滚动/导航、稳定编号、敏感遮蔽 | `snapshot.ts`、`extract.ts`、`actions.ts`、`ids.ts`、`privacy.ts` |
-| **panel/** | 简单对话、连接状态、模型选择、日志、审批框、问答框 | `main.ts`、`index.html`（`panel/index.html` 为构建拷贝的静态资产） |
+| **panel/** | 对话、状态、模型选择、框选截图、Markdown 渲染、日志、审批框、问答框 | `main.ts`(组装根) + `transport`/`conversation`/`model-selector`/`region`/`question`/`approval`/`status`/`log` + 共享 `common/`（`tools/` + `ui/`）；`index.html` |
 
 ## 核心机制
 
@@ -37,7 +37,7 @@ MV3 扩展，三段式：**service worker（控制中心）+ content script（�
 - 页面文本包一层随机 nonce 的「不可信内容」边界，防提示注入（防御纵深，审批才是强制边界）。
 
 ### 当前页感知
-- `tabs.onActivated`/`onUpdated`/`windows.onFocusChanged` 追踪活动标签页（URL+标题），面板实时显示，并在 `session.prompt` 时注入 `[浏览器上下文] 用户当前停留的页面: …`，让模型有上下文。
+- `tabs.onActivated`/`onUpdated`/`windows.onFocusChanged` 追踪活动标签页（URL+标题），面板实时显示，并在 `session.prompt` 时注入 `[网页描述]：<title> (<url>)`，让模型有上下文。
 
 ### 对话与交互
 - **简单对话**：`session.create` → `session.prompt` → 订阅 `event` 流渲染；「正在分析」指示覆盖「思考→调工具→执行→输出」全程（严格跟随 turn：`turn/start` 显示、`turn/end` 清除，中间文本/工具事件不清除）。

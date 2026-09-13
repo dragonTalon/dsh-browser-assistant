@@ -10,7 +10,7 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 |---|---|---|
 | **background/** | bridge client (discovery/reconnect/heartbeat), RPC forwarding, tool dispatch, approval coordination, current-page tracking, logging | `index.ts` (assembly), `bridge.ts`, `tools.ts`, `authorization.ts`, `approval-coordinator.ts` |
 | **content/** | page → text snapshot, perform click/type/scroll/navigate, stable numbering, sensitive masking | `snapshot.ts`, `extract.ts`, `actions.ts`, `ids.ts`, `privacy.ts` |
-| **panel/** | simple chat, connection status, model selection, logs, approval box, Q&A box | `main.ts`, `index.html` (`panel/index.html` is the static asset the build copies) |
+| **panel/** | chat, status, model selection, region capture, Markdown rendering, logs, approval box, Q&A box | `main.ts` (composition root) + `transport`/`conversation`/`model-selector`/`region`/`question`/`approval`/`status`/`log` + shared `common/` (`tools/` + `ui/`); `index.html` |
 
 ## Core mechanisms
 
@@ -37,7 +37,7 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 - Page text is wrapped in a random-nonce "untrusted content" boundary to prevent prompt injection (defense in depth; approval is the enforcing boundary).
 
 ### Current-page awareness
-- `tabs.onActivated`/`onUpdated`/`windows.onFocusChanged` track the active tab (URL + title), shown live in the panel, and injected on `session.prompt` as `[浏览器上下文] 用户当前停留的页面: …` to give the model context.
+- `tabs.onActivated`/`onUpdated`/`windows.onFocusChanged` track the active tab (URL + title), shown live in the panel, and injected on `session.prompt` as `[网页描述]：<title> (<url>)` to give the model context.
 
 ### Chat & interaction
 - **Simple chat**: `session.create` → `session.prompt` → subscribe to the `event` stream and render; the "working" indicator covers the whole "think → call tools → execute → output" flow (strictly follows the turn: `turn/start` shows, `turn/end` clears, intermediate text/tool events do not clear).
