@@ -13,6 +13,7 @@ import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@dsh-browser/protocol'
 import { runAction, ActionError } from './actions.ts'
 import { ElementIds } from './ids.ts'
 import type { SnapshotBudget } from './snapshot.ts'
+import { startRegionSelection, type RegionSelection } from './region.ts'
 
 /** Negotiated snapshot budgets, patched in from the background via message. */
 let budget: SnapshotBudget = { maxItems: 60, maxForms: 30, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
@@ -29,7 +30,7 @@ export interface ToolResult {
   error?: { code: string; message: string }
 }
 
-function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, sendResponse: (response: ToolResult) => void): true | undefined {
+function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, sendResponse: (response: unknown) => void): true | undefined {
   if (typeof message !== 'object' || message === null) return
   const msg = message as { type?: string }
   if (msg.type === 'DSH_BUDGET') {
@@ -39,6 +40,14 @@ function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, send
       sendResponse({ ok: true, result: { text: `snapshot budget updated` } })
     }
     return
+  }
+  if (msg.type === 'DSH_REGION_START') {
+    // User-initiated drag-select; keep the response channel open until the
+    // drag completes or is cancelled.
+    startRegionSelection((selection: RegionSelection | null) => {
+      sendResponse(selection ?? { cancelled: true })
+    })
+    return true
   }
   if (msg.type !== 'DSH_ACTION') return
   const actionMsg = message as {

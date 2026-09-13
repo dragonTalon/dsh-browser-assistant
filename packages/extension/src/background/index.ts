@@ -27,6 +27,7 @@ import type { ServerFrame } from '@dsh-browser/protocol'
 import { BridgeClient, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
 import { dispatchOpenTab, dispatchToolCall, type ToolAnswer, type ToolCall } from './tools.ts'
+import { requestRegionSelection, type RegionCaptureResult } from './region.ts'
 import { isApprovalDecision, type ApprovalAuthorization, type ApprovalPrompt, type ApprovalRequest } from '../security/approval.ts'
 import { ApprovalCoordinator, type ApprovalRequestResult } from './approval-coordinator.ts'
 
@@ -406,6 +407,26 @@ chrome.runtime.onConnect.addListener((port) => {
         broadcastStatus()
         broadcastLogSnapshot()
         break
+      case 'region.start': {
+        void (async () => {
+          const deliver = (result: RegionCaptureResult): void => {
+            try { port.postMessage({ type: 'region.result', result }) } catch { /* closed */ }
+          }
+          try {
+            // 框选目标是用户正在查看的活动标签页（拖拽发生在那里，captureVisibleTab 也只截活动标签页），
+            // 而不是模型工具的受控 tab affinity——这是用户本人发起的显式操作。
+            const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => [])
+            if (tab?.id === undefined || !/^https?:\/\//i.test(tab.url ?? '')) {
+              deliver({ ok: false, error: '当前标签页不支持框选（需为标准 http/https 页面）。' })
+              return
+            }
+            deliver(await requestRegionSelection(tab.id, tab.windowId))
+          } catch (error: unknown) {
+            deliver({ ok: false, error: error instanceof Error ? error.message : String(error) })
+          }
+        })()
+        break
+      }
     }
   })
 

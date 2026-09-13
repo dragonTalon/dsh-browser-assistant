@@ -8,8 +8,9 @@ A **Cordis plugin** that runs inside the dsh process. It does not modify dsh cor
 
 | File | Responsibility |
 |---|---|
-| `index.ts` | plugin entry: declares `inject`, resolves config, registers routes/tools, dsh version probe |
+| `index.ts` | plugin entry: declares `inject`, resolves config, registers routes/tools, dsh version probe, model-service probe |
 | `protocol.ts` → `@dsh-browser/protocol` | frame types + parsers (shared with the extension, single source of truth) |
+| `model-catalog.ts` | model catalog assembly: structural narrow interfaces for `llm`/`agentDefaultModel` + per-provider fault isolation |
 | `server.ts` | WebSocket server: auth, single connection, RPC passthrough, tool dispatch, event pump |
 | `remote-host-api.ts` | **Host adapter**: wraps Typert Gateway + Connection into `BrowserHostApi` |
 | `host-api.ts` | narrow interface `BrowserHostApi` (call/events/respond), isolates dsh version differences |
@@ -28,6 +29,16 @@ The plugin declares `inject = ['webServer', 'typertGateway', 'connection', 'tool
 - `tools`: `ctx.tools.register` (register model-callable tools)
 
 `remote-host-api.ts` converges these into `BrowserHostApi`, so dsh version evolution only changes this one adapter — the bridge server and the extension are unaffected.
+
+There is also a set of **probed optional services** (not in `inject`; discovered with `ctx.get` — when absent only `model.catalog` degrades, the plugin still boots):
+
+- `llm`: `listProviders` / `listModels` — the only in-process way to reach `inputModalities` (the multimodal authority); no dsh `@Remote` surface carries it
+- `agentDefaultModel`: `currentSelection` — the deployment default model selection
+
+### Bridge-local RPCs
+
+- `session.history` / `workspace.list`: assembly layers over gateway `wireStream` (snapshot expansion / baseline read).
+- `model.catalog`: **purely in-process** read of `llm` + `agentDefaultModel`, returning `{ default, groups, failures }`; each provider's catalog lookup is isolated by its own try/catch into `failures` without dragging down the rest; when the services were not probed it returns `llm-unavailable` — the connection and other RPCs are unaffected.
 
 ## Core mechanisms
 

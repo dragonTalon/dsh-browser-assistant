@@ -10,7 +10,7 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 |---|---|---|
 | **background/** | bridge client (discovery/reconnect/heartbeat), RPC forwarding, tool dispatch, approval coordination, current-page tracking, logging | `index.ts` (assembly), `bridge.ts`, `tools.ts`, `authorization.ts`, `approval-coordinator.ts` |
 | **content/** | page → text snapshot, perform click/type/scroll/navigate, stable numbering, sensitive masking | `snapshot.ts`, `extract.ts`, `actions.ts`, `ids.ts`, `privacy.ts` |
-| **panel/** | simple chat, connection status, logs, approval box, Q&A box | `main.ts`, `index.html` |
+| **panel/** | simple chat, connection status, model selection, logs, approval box, Q&A box | `main.ts`, `index.html` (`panel/index.html` is the static asset the build copies) |
 
 ## Core mechanisms
 
@@ -41,6 +41,7 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 
 ### Chat & interaction
 - **Simple chat**: `session.create` → `session.prompt` → subscribe to the `event` stream and render; the "working" indicator covers the whole "think → call tools → execute → output" flow (strictly follows the turn: `turn/start` shows, `turn/end` clears, intermediate text/tool events do not clear).
+- **Model selection & capability marking**: the pill-shaped dropdown on the left of the composer (same position and feel as the dsh GUI) re-pulls `model.catalog` (read-only) after every connect. Current selection resolves in order: session-history `projections.values.modelSelection` `next` → `lastUsed` → catalog `default`; three sync channels — optimistic update on `session.selectModel` success, instant alignment on `model/selection` events, and projection fallback on reconnect `session.history`. Multimodal marking is ternary: `inputModalities` containing `image` → "vision", published without it → "text", unpublished or absent from the catalog → "capability unknown" (never guessed); the current model's capability also shows as a small badge beside the dropdown. Choosing in the dropdown calls `session.selectModel`; **that dsh behavior also rewrites the deployment default model** (`agentDefaultModel.saveSelection`) — the panel says so persistently in the selector tooltip. A catalog fetch failure shows "model unavailable" on the selector plus an error-coded line in the conversation, and never blocks chat.
 - **dsh questions** (`ask_user_question`): `question/requested` pops a question box (options / custom input), answers return via `respond`.
 - **Status/logs**: a top status bar (connection state + address + reconnect count + current page) + a collapsible log panel (info/warn/error color-coded, ring-buffer replay).
 

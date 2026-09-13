@@ -2,7 +2,7 @@
 
 # Overall Architecture
 
-dsh-browser-assistant lets [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) read and operate the **real browser tabs the user already has open**. Pages are rendered as text-only structured snapshots, the model addresses elements by number, and login state and cookies are preserved throughout.
+dsh-browser-assistant lets [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) read and operate the **real browser tabs the user already has open**. Pages are rendered as text-only structured snapshots, the model addresses elements by number, and login state and cookies are preserved throughout. For visual understanding, the user can also drag-select a page region from the side panel — the cropped screenshot plus the region's DOM element list is bundled into the prompt and sent to a vision-capable model.
 
 In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin (server side) + a Chrome MV3 extension (browser side), joined by one custom WebSocket.**
 
@@ -44,12 +44,13 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 3. **Session**: panel `session.create` / `session.prompt` → `rpc` frame → bridge forwards to Typert Gateway → dsh executes → `rpc.result`.
 4. **Event stream**: dsh session events (`user/message`, `assistant/message`, `turn/end`, `question/requested`) are streamed to the panel as `event` frames.
 5. **Browser actions**: the model calls `browser_*` → bridge sends `tool.call` → the extension background routes it to the content script → `tool.result` returns to the model.
+6. **Region capture**: the panel's arrow button → background → content-script drag-select overlay → background crops `captureVisibleTab` to the selection → panel preview → `session.prompt` with the region image block + element list (dsh core admits the image and gates it to vision-capable models).
 
 ## Key design decisions
 
 | Decision | Approach | Why |
 |---|---|---|
-| **Text-first, no screenshots** | snapshot = title/URL/body/numbered inventory/forms; model operates by number | DeepSeek models have no vision; text saves tokens and is diffable |
+| **Text-first, region capture** | model tools stay text-only; the panel adds a user-initiated drag-select that crops a screenshot and extracts intersecting DOM elements into the prompt | text stays cheap and diffable for tools; visuals are explicit, user-confirmed, and go only to vision-capable models |
 | **Narrow interface isolates dsh versions** | the bridge depends only on `BrowserHostApi` (call/events/respond) | dsh 0.1.1 (ApiProxy) / 0.1.2 (0.1.3) (Typert) swap only the adapter layer |
 | **Single controlled tab** | tools bind to one tab; the active tab is bound on first call | prevents the model from silently switching to / peeking at other tabs |
 | **Fail-closed approval** | reads default to auto; every write requires approval, no panel → timeout reject | the security boundary lives in the extension background, not in model goodwill |

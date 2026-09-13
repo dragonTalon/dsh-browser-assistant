@@ -10,7 +10,7 @@ MV3 扩展，三段式：**service worker（控制中心）+ content script（�
 |---|---|---|
 | **background/** | 桥客户端（发现/重连/心跳）、RPC 转发、工具分发、审批协调、当前页追踪、日志 | `index.ts`(装配)、`bridge.ts`、`tools.ts`、`authorization.ts`、`approval-coordinator.ts` |
 | **content/** | 页面→文本快照、执行点击/输入/滚动/导航、稳定编号、敏感遮蔽 | `snapshot.ts`、`extract.ts`、`actions.ts`、`ids.ts`、`privacy.ts` |
-| **panel/** | 简单对话、连接状态、日志、审批框、问答框 | `main.ts`、`index.html` |
+| **panel/** | 简单对话、连接状态、模型选择、日志、审批框、问答框 | `main.ts`、`index.html`（`panel/index.html` 为构建拷贝的静态资产） |
 
 ## 核心机制
 
@@ -41,6 +41,7 @@ MV3 扩展，三段式：**service worker（控制中心）+ content script（�
 
 ### 对话与交互
 - **简单对话**：`session.create` → `session.prompt` → 订阅 `event` 流渲染；「正在分析」指示覆盖「思考→调工具→执行→输出」全程（严格跟随 turn：`turn/start` 显示、`turn/end` 清除，中间文本/工具事件不清除）。
+- **模型选择与能力标记**：输入区左侧的丸状下拉（与 dsh GUI 同位置同款观感）每次 connected 后重拉 `model.catalog`（只读）。当前选中的确定次序：会话历史 `projections.values.modelSelection` 的 `next` → `lastUsed` → 目录 `default`；同步通道三条——`session.selectModel` 成功乐观更新、事件流里的 `model/selection` 即时对齐、重连 `session.history` 投影兜底。多模态标记三元态：候选/当前模型 `inputModalities` 含 `image`→「视觉」、公布且不含→「文本」、未公布或目录查无此项→「能力未知」（不臆断），当前模型的能力另以小 badge 紧随下拉。下拉选定即调 `session.selectModel`；**该 dsh 行为会同时改写部署默认模型**（`agentDefaultModel.saveSelection`），以便在选择器 tooltip 常驻如实提示。目录拉取失败时选择器显示「模型不可用」并在对话里给出含错误码的失败行，不阻断消息收发。
 - **dsh 提问**（`ask_user_question`）：`question/requested` 弹问题框（选项/自定义输入），作答经 `respond` 回传。
 - **状态/日志**：顶部状态条（连接态+地址+重连次数+当前页）+ 可折叠日志面板（info/warn/error 分色，环形缓冲回放）。
 

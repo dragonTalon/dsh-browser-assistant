@@ -36,6 +36,7 @@ import {
   type HostConnectionLike,
   type TypertGatewayLike,
 } from './remote-host-api.ts'
+import type { AgentDefaultModelLike, LlmLike } from './model-catalog.ts'
 import { isRecord } from './host-api.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -108,7 +109,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   if (connection === undefined) throw new Error('bridge-dsh: dsh connection service is required')
   await ensureRemoteEventSource(ctx, gateway)
 
-  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection))
+  // Optional model-catalog services: probed (never injected), so an older dsh
+  // missing either service still boots the bridge — `model.catalog` then
+  // fails cleanly as `llm-unavailable` (design D1).
+  const llm = ctx.get('llm') as unknown as LlmLike | undefined
+  const agentDefaultModel = ctx.get('agentDefaultModel') as unknown as AgentDefaultModelLike | undefined
+  const modelServices = llm !== undefined && agentDefaultModel !== undefined
+    ? { llm, agentDefaultModel }
+    : undefined
+  if (modelServices === undefined) {
+    ctx.logger.warn('bridge-dsh: llm/agentDefaultModel 服务未探测到，model.catalog 将返回 llm-unavailable')
+  }
+
+  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection, modelServices))
 }
 
 function mountBridge(

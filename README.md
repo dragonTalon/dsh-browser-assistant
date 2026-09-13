@@ -20,7 +20,7 @@ One pnpm workspace, two halves joined by one WebSocket:
 - **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.0.3`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
 - **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.0.2`** (service worker + content script + side panel).
 
-> DeepSeek models have no vision, so the whole pipeline is **text-only**: no screenshots are ever captured. See [docs/en/architecture.md](docs/en/architecture.md) for the full design.
+> The model tool pipeline is **text-only** — pages become structured text snapshots, tools never capture screenshots. Separately, a **user-initiated** drag-select in the panel can send a cropped region screenshot to a **vision-capable** model. See [docs/en/architecture.md](docs/en/architecture.md) for the full design.
 
 ## Capabilities
 
@@ -32,6 +32,8 @@ One pnpm workspace, two halves joined by one WebSocket:
 | Read region / wait | `browser_get_text` / `browser_wait` |
 | Ask the user | dsh `ask_user_question` renders in the panel; answers flow back to the model |
 | Page awareness | extension tracks the active tab and injects its URL/title into each prompt as context |
+| Region capture | user drag-selects a page region → cropped screenshot + DOM element list → sent to a vision-capable model |
+| Model selection | panel re-pulls `model.catalog` on connect; dropdown with capability badge (vision / text / unknown) → `session.selectModel` |
 
 Security model: the bridge carries its own bearer token; reads are auto-allowed, state-changing actions fail closed behind a side-panel approval; passwords/card numbers are masked and never leave the page.
 
@@ -76,6 +78,14 @@ Unzip `bridge-browser-0.0.2.zip`, then `chrome://extensions` → enable **Develo
 pnpm install --frozen-lockfile
 pnpm build
 # → packages/bridge-dsh/lib/index.js  and  packages/extension/dist/
+```
+
+Note for local development: `dsh plugin add` installs a **packed snapshot** (`~/.dsh/profiles/<profile>/node_modules/bridge-dsh/`), so rebuilding the workspace `lib/index.js` alone never reaches the running dsh. After every bridge source change:
+
+```sh
+bash packages/bridge-dsh/build.sh       # rebuild the workspace artifact
+bash scripts/sync-profile.sh            # copy into the installed plugin dir (auto-backup)
+# then restart dsh (or reload the plugin) so the new bundle is loaded
 ```
 
 ## Releases

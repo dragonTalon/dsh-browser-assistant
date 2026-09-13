@@ -6,78 +6,136 @@
   <title>dsh-bs · dsh 浏览器副手</title>
   <style>
     :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
     body {
       margin: 0; font-family: system-ui, -apple-system, sans-serif;
       display: flex; flex-direction: column; height: 100vh;
-      font-size: 14px;
+      font-size: 13px; line-height: 1.5;
     }
-    #status { padding: 6px 12px; border-bottom: 1px solid rgba(128,128,128,.25); font-size: 12px; flex: none; }
-    #status .row { display: flex; gap: 8px; align-items: center; }
+
+    /* ---- 状态区 ---- */
+    #status { padding: 8px 12px; border-bottom: 1px solid rgba(128,128,128,.2); font-size: 12px; flex: none; display: flex; flex-direction: column; gap: 6px; }
+    #status .row { display: flex; gap: 8px; align-items: center; min-height: 20px; }
     #status .dot { width: 8px; height: 8px; border-radius: 50%; background: #999; flex: none; }
     #status.connected .dot { background: #2ecc71; }
     #status.connecting .dot, #status.reconnecting .dot { background: #f1c40f; }
     #status.stopped .dot { background: #e74c3c; }
+    #statusIcon { border-radius: 4px; flex: none; }
     #statusText { font-weight: 600; }
-    #statusUrl { color: #888; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    #statusUrl { color: #888; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
     #logToggle { flex: none; font-size: 11px; padding: 2px 8px; }
-    #logPanel { display: none; max-height: 35vh; overflow-y: auto; border-bottom: 1px solid rgba(128,128,128,.25); background: rgba(0,0,0,.04); font-family: ui-monospace, Menlo, monospace; font-size: 11px; padding: 6px 10px; flex: none; }
+    #pageRow { font-size: 11px; }
+    #pageRow .label { color: #8a8a8a; flex: none; width: 44px; }
+    #pageUrl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; color: #666; }
+    @media (prefers-color-scheme: dark) { #pageUrl { color: #999; } }
+
+    /* 模型选择器（输入区内丸状控件，与 dsh GUI 的位置/观感对齐） */
+    #modelWrap { flex: 0 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; }
+    #modelSelect {
+      min-width: 0; max-width: 100%; font: inherit; font-size: 11px;
+      padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(128,128,128,.35);
+      background: transparent; color: inherit; cursor: pointer;
+    }
+    #modelWrap:hover #modelSelect:not(:disabled) { border-color: rgba(128,128,128,.65); }
+    #modelSelect:disabled { opacity: .55; cursor: default; max-width: 130px; }
+    #modelSelect optgroup, #modelSelect option { color: #111; background: #fff; font-size: 13px; }
+    @media (prefers-color-scheme: dark) { #modelSelect optgroup, #modelSelect option { color: #eee; background: #262626; } }
+    .capBadge {
+      flex: none; font-size: 10px; padding: 1px 7px; border-radius: 999px;
+      border: 1px solid transparent; white-space: nowrap;
+    }
+    .capBadge.vision { color: #0b7a3e; border-color: rgba(46,204,113,.5); background: rgba(46,204,113,.12); }
+    .capBadge.text { color: #666; border-color: rgba(128,128,128,.4); background: rgba(128,128,128,.1); }
+    .capBadge.unknown { color: #8a6d00; border-color: rgba(241,196,15,.45); background: rgba(241,196,15,.1); }
+    .capBadge.none { display: none; }
+    @media (prefers-color-scheme: dark) {
+      .capBadge.vision { color: #7ce0a6; }
+      .capBadge.text { color: #aaa; }
+      .capBadge.unknown { color: #e2c04a; }
+    }
+
+    /* ---- 日志 ---- */
+    #logPanel { display: none; max-height: 35vh; overflow-y: auto; border-bottom: 1px solid rgba(128,128,128,.2); background: rgba(0,0,0,.04); font-family: ui-monospace, Menlo, monospace; font-size: 11px; padding: 6px 12px; flex: none; }
     #logPanel.open { display: block; }
     .logline { padding: 1px 0; white-space: pre-wrap; word-break: break-all; }
     .logline .t { color: #888; margin-right: 6px; }
-    .logline.info { color: inherit; }
     .logline.warn { color: #b9770e; }
     .logline.error { color: #c0392b; }
-    #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .row { max-width: 90%; padding: 8px 10px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
-    .row.user { align-self: flex-end; background: rgba(52,152,219,.18); }
-    .row.assistant { align-self: flex-start; background: rgba(128,128,128,.12); }
-    .row.system { align-self: center; color: #888; font-size: 12px; background: none; }
-    .row.working { display: flex; align-items: center; gap: 8px; color: #2e86de; font-weight: 600; font-size: 13px; }
+
+    /* ---- 对话 ---- */
+    #log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .row { max-width: 92%; padding: 8px 11px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+    .row.user { align-self: flex-end; background: rgba(52,152,219,.16); border-bottom-right-radius: 4px; }
+    .row.assistant { align-self: flex-start; background: rgba(128,128,128,.12); border-bottom-left-radius: 4px; }
+    .row.system { align-self: center; color: #888; font-size: 11px; background: none; padding: 2px 8px; }
+    .row.working { display: flex; align-items: center; gap: 8px; color: #2e86de; font-weight: 600; font-size: 12px; }
     .spinner { width: 14px; height: 14px; border: 2px solid rgba(46,134,222,.25); border-top-color: #2e86de; border-radius: 50%; animation: dsh-spin 0.8s linear infinite; flex: none; }
     @keyframes dsh-spin { to { transform: rotate(360deg); } }
-    #approval { display: none; padding: 12px; border-top: 1px solid rgba(128,128,128,.25); background: rgba(241,196,15,.15); flex: none; }
-    #approval .q { margin-bottom: 8px; }
-    #approval .btns { display: flex; gap: 8px; }
-    #composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(128,128,128,.25); flex: none; }
-    #composer textarea { flex: 1; resize: none; min-height: 36px; padding: 8px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); background: transparent; font: inherit; }
-    button { padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); background: transparent; cursor: pointer; }
-    button.primary { background: #2e86de; color: #fff; border-color: #2e86de; }
-    button.danger { background: #e74c3c; color: #fff; border-color: #e74c3c; }
-    #question { display: none; padding: 12px; border-top: 1px solid rgba(128,128,128,.25); background: rgba(46,134,222,.08); flex: none; max-height: 40vh; overflow-y: auto; }
-    #question .q { margin-bottom: 8px; font-weight: 600; }
+
+    /* ---- 底部区块（审批/提问/输入） ---- */
+    .panelBlock { display: none; padding: 12px; border-top: 1px solid rgba(128,128,128,.2); flex: none; max-height: 45vh; overflow-y: auto; }
+    .panelBlock .q { font-weight: 600; margin-bottom: 8px; }
+    #approval { background: rgba(241,196,15,.12); }
+    #question { background: rgba(46,134,222,.07); }
+    .btns { display: flex; gap: 8px; margin-top: 2px; }
+
+    /* ---- 框选附件（截图作为输入区附件，意图走主输入框） ---- */
+    #attachment { display: none; gap: 8px; align-items: flex-start; padding: 6px 8px; border: 1px solid rgba(46,134,222,.35); border-radius: 8px; background: rgba(46,134,222,.06); }
+    #attachment.show { display: flex; }
+    #attachmentImg { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(128,128,128,.3); flex: none; background: #fff; }
+    #attachmentMeta { flex: 1; min-width: 0; font-size: 11px; color: #8a8a8a; }
+    #attachmentTitle { font-weight: 600; font-size: 12px; color: inherit; margin-bottom: 2px; }
+    #attachmentDetails summary { cursor: pointer; color: #8a8a8a; }
+    #attachmentElements { margin: 4px 0 0; padding: 6px; border-radius: 6px; background: rgba(0,0,0,.04); font-family: ui-monospace, Menlo, monospace; font-size: 10px; white-space: pre-wrap; word-break: break-all; max-height: 14vh; overflow-y: auto; }
+    #attachmentRemove { flex: none; padding: 2px 8px; border-radius: 6px; font-size: 13px; line-height: 1; }
+
+    #question { max-height: 40vh; }
     .qitem { margin-bottom: 12px; }
     .qitem .qtext { font-weight: 600; margin-bottom: 2px; }
     .qitem .qdetail { color: #888; font-size: 12px; margin-bottom: 6px; }
     .qitem .qoptions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
     .qoption { font-size: 12px; padding: 4px 10px; }
     .qoption.selected { background: #2e86de; color: #fff; border-color: #2e86de; }
-    .qitem .qcustom { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); background: transparent; font: inherit; }
+    .qitem .qcustom { width: 100%; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); background: transparent; font: inherit; color: inherit; }
+
+    /* ---- 输入区（上下两层：上层控制条，下层全宽输入 + 发送） ---- */
+    #composer { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid rgba(128,128,128,.2); flex: none; }
+    #composerBar { display: flex; gap: 8px; align-items: center; }
+    #composerRow { display: flex; gap: 8px; align-items: flex-end; }
+    #composer textarea { flex: 1; resize: none; min-height: 40px; max-height: 30vh; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; font: inherit; color: inherit; }
+    button { padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
+    button:hover { border-color: rgba(128,128,128,.7); }
+    button.primary { background: #2e86de; color: #fff; border-color: #2e86de; }
+    button.primary:hover { background: #2574c2; }
+    button.danger { background: #e74c3c; color: #fff; border-color: #e74c3c; }
+    button.danger:hover { background: #cf3f31; }
+    #regionBtn { flex: none; font-size: 15px; padding: 6px 10px; }
   </style>
 </head>
 <body>
   <div id="status" class="stopped">
     <div class="row">
-      <img src="../icons/icon32.png" width="16" height="16" alt="" style="border-radius:4px;flex:none;">
+      <img id="statusIcon" src="../icons/icon32.png" width="16" height="16" alt="">
       <span class="dot"></span>
       <span id="statusText">stopped</span>
       <span id="statusUrl"></span>
       <button id="logToggle" class="log">日志</button>
     </div>
     <div class="row" id="pageRow">
-      <span style="color:#888;">当前页</span>
-      <span id="pageUrl" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;">—</span>
+      <span class="label">当前页</span>
+      <span id="pageUrl">—</span>
     </div>
   </div>
   <div id="logPanel"></div>
   <div id="log"></div>
-  <div id="approval">
+  <div id="approval" class="panelBlock">
     <div class="q" id="approvalText"></div>
     <div class="btns">
       <button class="primary" id="approveBtn">允许一次</button>
       <button class="danger" id="denyBtn">拒绝</button>
     </div>
   </div>
-  <div id="question">
+  <div id="question" class="panelBlock">
     <div class="q" id="questionTitle">dsh 想问你：</div>
     <div id="questionBody"></div>
     <div class="btns">
@@ -86,8 +144,28 @@
     </div>
   </div>
   <div id="composer">
-    <textarea id="input" placeholder="输入任务，例如：读取当前页面并总结"></textarea>
-    <button class="primary" id="sendBtn">发送</button>
+    <div id="attachment">
+      <img id="attachmentImg" alt="选区截图" />
+      <div id="attachmentMeta">
+        <div id="attachmentTitle">框选区域截图</div>
+        <details id="attachmentDetails">
+          <summary>选区内元素清单</summary>
+          <pre id="attachmentElements"></pre>
+        </details>
+      </div>
+      <button id="attachmentRemove" title="移除选区">×</button>
+    </div>
+    <div id="composerBar">
+      <button id="regionBtn" title="框选页面区域截图">⌖</button>
+      <div id="modelWrap">
+        <select id="modelSelect" disabled title="选择会话模型；选择会成为 dsh 默认模型"></select>
+        <span id="modelCap" class="capBadge none"></span>
+      </div>
+    </div>
+    <div id="composerRow">
+      <textarea id="input" placeholder="输入任务，例如：读取当前页面并总结"></textarea>
+      <button class="primary" id="sendBtn">发送</button>
+    </div>
   </div>
   <script type="module" src="panel.js"></script>
 </body>

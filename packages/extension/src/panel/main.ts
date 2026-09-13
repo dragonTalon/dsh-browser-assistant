@@ -9,6 +9,7 @@
  */
 
 import type { BridgeState } from '../background/bridge.ts'
+import { wrapUntrustedContent } from '../security/untrusted.ts'
 
 // 后台 service worker 被挂起后 port 会断开；这里做惰性重连，post 时若断开则重连一次。
 let port: chrome.runtime.Port | null = null
@@ -50,10 +51,19 @@ const questionEl = document.getElementById('question')!
 const questionBodyEl = document.getElementById('questionBody')!
 const questionSubmitBtn = document.getElementById('questionSubmitBtn')!
 const questionDismissBtn = document.getElementById('questionDismissBtn')!
+const regionBtn = document.getElementById('regionBtn') as HTMLButtonElement
+// 框选截图作为输入区附件（对齐 dsh GUI 附件交互：缩略图挂在输入区，意图走主输入框）
+const attachmentEl = document.getElementById('attachment')!
+const attachmentImgEl = document.getElementById('attachmentImg') as HTMLImageElement
+const attachmentElementsEl = document.getElementById('attachmentElements')!
+const attachmentRemoveBtn = document.getElementById('attachmentRemove') as HTMLButtonElement
+const modelSelectEl = document.getElementById('modelSelect') as HTMLSelectElement
+const modelCapEl = document.getElementById('modelCap')!
 
 let sessionId: string | null = null
 let pendingApprovalId: string | null = null
-const pendingRpc = new Map<string, (value: unknown) => void>()
+interface PendingRpc { resolve: (value: unknown) => void; reject: (error: Error) => void }
+const pendingRpc = new Map<string, PendingRpc>()
 let rpcSeq = 0
 let lastState: BridgeState = 'stopped'
 let interrupted = false
@@ -72,6 +82,26 @@ const STATE_LABELS: Record<string, string> = {
   reconnecting: '重连中…',
   stopped: '已停止',
 }
+
+// ---- 模型目录与当前选择 ----
+
+interface ModelSelection { provider: string; model: string; reasoningEffort?: string }
+interface CatalogModel { id: string; name: string; description?: string; inputModalities?: readonly string[] }
+interface ModelCatalog {
+  default: ModelSelection
+  groups: { id: string; name: string; models: CatalogModel[] }[]
+  failures: { id: string; name: string; message: string }[]
+}
+
+let catalog: ModelCatalog | null = null
+let catalogLoading = false
+/** 会话实际选中的模型（投影/事件/乐观更新三源合一）；null = 未见会话级选择。 */
+let currentSelection: ModelSelection | null = null
+let selectingModel = false
+/** 上次渲染的状态签名：20s 心跳状态广播会反复进来，签名相同则跳过 DOM 重建。 */
+let modelRowSig = ''
+/** 本次 render 的 option value → 目标选择 映射（每轮重建）。 */
+const optionMap = new Map<string, { provider: string; model: string }>()
 
 // ---- 会话（简单对话通道）----
 
@@ -129,8 +159,8 @@ function setWorking(on: boolean): void {
 function rpc<T>(method: string, payload: unknown): Promise<T> {
   const id = `p${++rpcSeq}`
   return new Promise<T>((resolve, reject) => {
-    pendingRpc.set(id, (value) => resolve(value as T))
-    try { post({ type: 'rpc', id, method, payload }) } catch (e) { pendingRpc.delete(id); reject(e) }
+    pendingRpc.set(id, { resolve: (value) => resolve(value as T), reject })
+    try { post({ type: 'rpc', id, method, payload }) } catch (e) { pendingRpc.delete(id); reject(e instanceof Error ? e : new Error(String(e))) }
   })
 }
 
@@ -190,6 +220,15 @@ function handleSessionEvent(event: unknown): void {
       assistantRow = null
       break
     }
+    case 'model/selection': {
+      // 会话模型被改（面板内选定生效、或面板外其他客户端改动）→ 即时对齐显示。
+      const sel = pickSelection(ev.data)
+      if (sel !== null) {
+        currentSelection = sel
+        renderModelRow()
+      }
+      break
+    }
   }
 }
 
@@ -239,6 +278,12 @@ async function ensureSession(): Promise<boolean> {
 
 async function send(): Promise<void> {
   const text = inputEl.value.trim()
+  // 有框选附件时：输入内容即意图，截图+元素随同一 prompt 发出（空意图也允许）。
+  if (pendingRegion !== null) {
+    inputEl.value = ''
+    await sendRegion(text)
+    return
+  }
   if (text === '') return
   if (!await ensureSession()) return
   inputEl.value = ''
@@ -256,6 +301,8 @@ async function reloadHistory(): Promise<void> {
   if (sessionId === null) return
   try {
     const page = await rpc<{ events?: unknown }>('session.history', { sessionId })
+    // 投影兜底：重连后把当前选中模型对齐回会话实际值。
+    alignSelectionFromProjections(page)
     if (!Array.isArray(page?.events)) return
     // 清空对话并整体重渲染（简单可靠）。
     while (logEl.firstChild !== null) logEl.removeChild(logEl.firstChild)
@@ -428,16 +475,22 @@ function onPortMessage(message: unknown): void {
       const wasConnected = lastState === 'connected'
       lastState = s.state
       if (s.state === 'connected') {
-        // 连接成功后再建会话（面板打开时 bridge 可能还没连上）。
+        // 连接成功后再建会话（面板打开时 bridge 可能还没连上）；
+        // 每次连接成功重拉模型目录（目录会随 adapter 注册变化，D2 刷新点）。
+        if (!wasConnected) void loadCatalog()
+        renderModelRow()
         if (sessionId === null) void ensureSession()
         else if (!wasConnected && interrupted) {
           interrupted = false
           void reloadHistory()  // 重连后恢复中断期间遗漏的最终输出
         }
-      } else if (workingRow !== null) {
-        // 连接断开且有一个未完成的 turn：清掉「正在分析」并标记中断。
-        interrupted = true
-        setWorking(false)
+      } else {
+        renderModelRow()  // 非连接态：模型行回到占位「等待连接 dsh…」
+        if (workingRow !== null) {
+          // 连接断开且有一个未完成的 turn：清掉「正在分析」并标记中断。
+          interrupted = true
+          setWorking(false)
+        }
       }
       break
     }
@@ -458,18 +511,297 @@ function onPortMessage(message: unknown): void {
       pendingApprovalId = null
       break
     case 'rpc.result': {
-      const r = msg as { id: string; ok: boolean; result?: unknown }
-      const resolve = pendingRpc.get(r.id)
-      if (resolve === undefined) return
+      const r = msg as { id: string; ok: boolean; result?: unknown; error?: { code?: string; message?: string } }
+      const pending = pendingRpc.get(r.id)
+      if (pending === undefined) return
       pendingRpc.delete(r.id)
-      // 桥接会中继网关信封 { result: { ok, value } }，解包出业务值。
-      const envelope = r.result as { result?: { ok?: boolean; value?: unknown } } | undefined
-      if (r.ok && envelope?.result?.ok !== false) resolve(envelope?.result?.value)
-      else resolve(undefined)
+      // 桥接会中继网关信封 { result: { ok, value | error } }，解包出业务值；
+      // 业务失败（如 session/attachment-invalid）转为 reject，携带稳定错误码。
+      const envelope = r.result as { result?: { ok?: boolean; value?: unknown; error?: { code?: string; message?: string } } } | undefined
+      if (r.ok && envelope?.result?.ok !== false) {
+        pending.resolve(envelope?.result?.value)
+      } else if (r.ok && envelope?.result?.ok === false) {
+        const code = envelope.result.error?.code ?? 'rpc-failed'
+        const message = envelope.result.error?.message ?? 'rpc failed'
+        pending.reject(withCode(new Error(`${code}: ${message}`), code))
+      } else {
+        const code = r.error?.code ?? 'bridge-unavailable'
+        const message = r.error?.message ?? 'rpc failed'
+        pending.reject(withCode(new Error(`${code}: ${message}`), code))
+      }
+      break
+    }
+    case 'region.result': {
+      handleRegionResult((msg as { result: unknown }).result)
       break
     }
   }
 }
+
+function withCode(error: Error, code: string): Error & { code: string } {
+  return Object.assign(error, { code })
+}
+
+// ---- 模型目录与选择（D2/D3：投影优先、default 兜底、三元态标记）----
+
+/** 显示用选中：会话级选择优先，否则目录部署默认（会话从未选择时的真实使用对象）。 */
+function effectiveSelection(): ModelSelection | null {
+  return currentSelection ?? catalog?.default ?? null
+}
+
+/** 在最新目录里查 (provider, model) 条目；目录未加载或查无此项返回 undefined。 */
+function catalogEntryOf(sel: ModelSelection): CatalogModel | undefined {
+  if (catalog === null) return undefined
+  return catalog.groups.find((g) => g.id === sel.provider)?.models.find((m) => m.id === sel.model)
+}
+
+/** 能力三元态：inputModalities 含 image→视觉；公布且不含→文本；未公布/查无条目→未知（不臆断）。 */
+function capabilityOf(sel: ModelSelection | null): { cls: 'vision' | 'text' | 'unknown' | 'none'; label: string } {
+  if (sel === null) return catalog === null ? { cls: 'none', label: '' } : { cls: 'unknown', label: '能力未知' }
+  const entry = catalogEntryOf(sel)
+  if (entry?.inputModalities === undefined) return { cls: 'unknown', label: '能力未知' }
+  return entry.inputModalities.includes('image') ? { cls: 'vision', label: '视觉' } : { cls: 'text', label: '文本' }
+}
+
+/** 逐字段校验一个 ModelSelection 形对象。 */
+function pickSelection(value: unknown): ModelSelection | null {
+  if (typeof value !== 'object' || value === null) return null
+  const v = value as { provider?: unknown; model?: unknown; reasoningEffort?: unknown }
+  if (typeof v.provider !== 'string' || v.provider === '' || typeof v.model !== 'string' || v.model === '') return null
+  return {
+    provider: v.provider,
+    model: v.model,
+    ...(typeof v.reasoningEffort === 'string' ? { reasoningEffort: v.reasoningEffort } : {}),
+  }
+}
+
+/** 刷新模型选择器：占位三态（加载中/待连接/目录不可用）、目录 optgroup、能力 badge、tooltip 常驻提示。 */
+function renderModelRow(force = false): void {
+  const sig = JSON.stringify({ c: catalog, s: currentSelection, l: catalogLoading, st: lastState, d: selectingModel })
+  if (!force && sig === modelRowSig) return
+  modelRowSig = sig
+  optionMap.clear()
+  modelSelectEl.textContent = ''
+  const cap = capabilityOf(effectiveSelection())
+  modelCapEl.className = `capBadge ${cap.cls}`
+  modelCapEl.textContent = cap.label
+
+  const placeholder = (label: string, title: string): void => {
+    // 占位时模型语义不可见，能力 badge 一并隐藏；原因经 tooltip 呈现。
+    modelCapEl.className = 'capBadge none'
+    modelCapEl.textContent = ''
+    const opt = document.createElement('option')
+    opt.textContent = label
+    opt.selected = true
+    modelSelectEl.appendChild(opt)
+    modelSelectEl.disabled = true
+    modelSelectEl.title = title
+  }
+
+  if (catalogLoading) { placeholder('模型加载中…', '模型目录加载中'); return }
+  if (lastState !== 'connected') { placeholder('等待连接…', '等待连接 dsh'); return }
+  if (catalog === null) { placeholder('模型不可用', '模型目录不可用——消息收发不受影响；失败原因见对话提示'); return }
+
+  const sel = effectiveSelection()
+  let matched = false
+  for (const group of catalog.groups) {
+    const optgroup = document.createElement('optgroup')
+    optgroup.label = group.name
+    for (const model of group.models) {
+      // option value 用 JSON 对子串键，杜绝 provider/model 拼接碰撞。
+      const key = JSON.stringify([group.id, model.id])
+      optionMap.set(key, { provider: group.id, model: model.id })
+      const opt = document.createElement('option')
+      opt.value = key
+      opt.textContent = model.inputModalities?.includes('image') === true ? `${model.name} 👁` : model.name
+      if (sel !== null && group.id === sel.provider && model.id === sel.model) { opt.selected = true; matched = true }
+      optgroup.appendChild(opt)
+    }
+    modelSelectEl.appendChild(optgroup)
+  }
+  if (sel !== null && !matched) {
+    // 会话投影/默认中的模型不在当前目录（adapter 目录漂移）：保留显示，不强行改选。
+    const opt = document.createElement('option')
+    opt.value = '__current'
+    optionMap.set('__current', { provider: sel.provider, model: sel.model })
+    opt.textContent = `${sel.model}（当前，目录外）`
+    opt.selected = true
+    modelSelectEl.appendChild(opt)
+  }
+  modelSelectEl.disabled = selectingModel
+  modelSelectEl.title = catalog.failures.length > 0
+    ? `选择会话模型；选择会成为 dsh 默认模型；${catalog.failures.length} 个 provider 目录加载失败`
+    : '选择会话模型；选择会成为 dsh 默认模型'
+}
+
+/** 连接成功后拉取模型目录；失败不阻断对话，且把根因显示在对话里，不做静默降级。 */
+async function loadCatalog(): Promise<void> {
+  if (catalogLoading) return
+  catalogLoading = true
+  renderModelRow()
+  try {
+    catalog = await rpc<ModelCatalog>('model.catalog', {})
+  } catch (error: unknown) {
+    catalog = null
+    const code = (error as { code?: unknown } | null)?.code
+    appendRow('system', `模型目录加载失败${typeof code === 'string' ? ` [${code}]` : ''}: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    catalogLoading = false
+    renderModelRow()
+  }
+}
+
+/** 从 session.history 响应的 projections 对齐当前选中（next ?? lastUsed；投影缺失则不动本地态）。 */
+function alignSelectionFromProjections(page: unknown): void {
+  const projections = (page as { projections?: { values?: { modelSelection?: { next?: unknown; lastUsed?: unknown } } } })
+    .projections?.values?.modelSelection
+  if (projections === undefined) return
+  const sel = pickSelection(projections.next) ?? pickSelection(projections.lastUsed)
+  if (sel !== null) {
+    currentSelection = sel
+    renderModelRow()
+  }
+}
+
+/** 用户在下拉选定模型：调 session.selectModel，乐观更新、失败回退并显示错误码提示。 */
+async function onModelChange(): Promise<void> {
+  const target = optionMap.get(modelSelectEl.value)
+  if (target === undefined || selectingModel) return
+  const previous = effectiveSelection()
+  renderModelRow(true)  // change 已改 DOM 选中态；先强行还原到实际选中，避免未决期间假显示
+  if (!await ensureSession()) { renderModelRow(true); return }
+  selectingModel = true
+  currentSelection = { provider: target.provider, model: target.model }
+  renderModelRow()
+  try {
+    await rpc('session.selectModel', { sessionId, provider: target.provider, model: target.model })
+  } catch (error: unknown) {
+    currentSelection = previous
+    const code = (error as { code?: unknown } | null)?.code
+    appendRow('system', `切换模型失败${typeof code === 'string' ? ` [${code}]` : ''}: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    selectingModel = false
+    renderModelRow()
+  }
+}
+
+// ---- 框选截图 ----
+
+interface PendingRegion {
+  mediaType: string
+  data: string
+  width: number
+  height: number
+  elements: unknown[]
+}
+
+let pendingRegion: PendingRegion | null = null
+let regionSelecting = false
+
+function formatRegionElement(el: unknown): string {
+  const e = el as { tag?: unknown; id?: unknown; classes?: unknown; role?: unknown; name?: unknown; x?: unknown; y?: unknown; width?: unknown; height?: unknown }
+  const tag = typeof e.tag === 'string' ? e.tag : '?'
+  const id = typeof e.id === 'string' && e.id !== '' ? `#${e.id}` : ''
+  const cls = typeof e.classes === 'string' && e.classes !== '' ? `.${e.classes.trim().split(/\s+/).join('.')}` : ''
+  const role = typeof e.role === 'string' && e.role !== '' ? ` role="${e.role}"` : ''
+  const name = typeof e.name === 'string' && e.name !== '' ? ` "${e.name}"` : ''
+  const coords = ` @(${String(e.x)},${String(e.y)} ${String(e.width)}×${String(e.height)})`
+  return `<${tag}${id}${cls}${role}>${name}${coords}`
+}
+
+function buildRegionPromptText(intent: string, elements: unknown[]): string {
+  const list = elements.map(formatRegionElement).join('\n')
+  const wrapped = wrapUntrustedContent(list, 8_000)
+  const intentText = intent.trim() === '' ? '(未补充具体意图)' : intent.trim()
+  return `[用户框选了当前页面的一块区域]\n用户意图：${intentText}\n\n选区内元素清单：\n${wrapped}`
+}
+
+function isImageUnsupported(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  const code = (error as { code?: unknown } | null)?.code
+  return code === 'session/attachment-invalid'
+    || message.includes('session/attachment-invalid')
+    || message.includes('does not support image input')
+}
+
+function showRegionAttachment(region: PendingRegion): void {
+  pendingRegion = region
+  attachmentImgEl.src = `data:${region.mediaType};base64,${region.data}`
+  attachmentElementsEl.textContent = region.elements.map(formatRegionElement).join('\n')
+  attachmentEl.classList.add('show')
+  // 意图直接在主输入框里补——把焦点交还给用户正在打的字。
+  inputEl.focus()
+}
+
+function clearRegionAttachment(): void {
+  pendingRegion = null
+  attachmentImgEl.src = ''
+  attachmentElementsEl.textContent = ''
+  attachmentEl.classList.remove('show')
+}
+
+function handleRegionResult(result: unknown): void {
+  regionSelecting = false
+  if (typeof result !== 'object' || result === null) {
+    appendRow('system', '框选失败：返回了无效结果。')
+    return
+  }
+  const r = result as { ok?: boolean; cancelled?: boolean; error?: string; screenshot?: unknown; elements?: unknown }
+  if (r.ok === true && typeof r.screenshot === 'object' && r.screenshot !== null) {
+    const shot = r.screenshot as { mediaType?: unknown; data?: unknown; width?: unknown; height?: unknown }
+    if (typeof shot.mediaType !== 'string' || typeof shot.data !== 'string' || !Array.isArray(r.elements)) {
+      appendRow('system', '框选失败：截图或元素数据不完整。')
+      return
+    }
+    showRegionAttachment({ mediaType: shot.mediaType, data: shot.data, width: 0, height: 0, elements: r.elements })
+    appendRow('system', '已截取选区：输入意图后直接发送（点 × 移除）。')
+    return
+  }
+  if (r.cancelled === true) {
+    appendRow('system', '已取消框选。')
+    return
+  }
+  appendRow('system', `框选失败：${typeof r.error === 'string' ? r.error : '未知错误'}`)
+}
+
+async function sendRegion(intent: string): Promise<void> {
+  if (pendingRegion === null) return
+  // 会话不可用时保留附件，让用户连上后能重发同一张截图。
+  if (!await ensureSession()) return
+  const region = pendingRegion
+  const text = buildRegionPromptText(intent, region.elements)
+  const content: unknown[] = [{ type: 'text', text }]
+  if (region.mediaType !== '' && region.data !== '') {
+    content.push({ type: 'image', mediaType: region.mediaType, data: region.data, name: 'region.jpeg' })
+  }
+  clearRegionAttachment()
+  setWorking(true)
+  try {
+    await rpc('session.prompt', { sessionId, mode: 'queue', content })
+  } catch (error: unknown) {
+    if (isImageUnsupported(error)) {
+      // 非视觉模型：剥离图片，仅以元素清单重发一次。
+      appendRow('system', '当前模型无视觉，已降级为元素描述。')
+      try {
+        await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
+      } catch (retryError: unknown) {
+        setWorking(false)
+        appendRow('system', `发送失败: ${retryError instanceof Error ? retryError.message : String(retryError)}`)
+      }
+    } else {
+      setWorking(false)
+      appendRow('system', `发送失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+}
+
+regionBtn.addEventListener('click', () => {
+  if (regionSelecting) return
+  regionSelecting = true
+  appendRow('system', '请在页面上拖拽框选区域（Esc 取消）…')
+  post({ type: 'region.start' })
+})
+attachmentRemoveBtn.addEventListener('click', () => { clearRegionAttachment() })
 
 sendBtn.addEventListener('click', () => { void send() })
 inputEl.addEventListener('keydown', (e) => {
@@ -487,8 +819,11 @@ denyBtn.addEventListener('click', () => {
   }
 })
 
+modelSelectEl.addEventListener('change', () => { void onModelChange() })
+
 // 初始状态 + 日志快照。会话在「已连接」后由 status 分支懒创建，避免
 // 面板打开瞬间 bridge 尚未连上导致 session.create 失败。
+renderModelRow()  // 启动占位：「等待连接 dsh…」
 port = connect()
 post({ type: 'request-status' })
 

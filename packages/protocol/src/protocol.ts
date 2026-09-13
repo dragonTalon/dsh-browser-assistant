@@ -39,6 +39,25 @@ export const DEFAULT_SNAPSHOT_MAX_CHARS = 32_000
 /** Smallest snapshot budget that can carry both trust boundaries and page text. */
 export const MIN_SNAPSHOT_MAX_CHARS = 500
 
+/** Raster media types accepted for prompt image parts (mirrors the dsh attachment vocabulary). */
+export type PromptImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+
+/** One image part a panel may append to a `session.prompt` content array. */
+export interface PromptImagePart {
+  readonly type: 'image'
+  readonly mediaType: PromptImageMediaType
+  /** Canonical base64 of the image bytes (no data-URL prefix). */
+  readonly data: string
+  /** Optional display name; never a filesystem path. */
+  readonly name?: string
+}
+
+/** Upper bound on one region screenshot's encoded bytes (before base64 expansion). */
+export const MAX_SCREENSHOT_BYTES = 2_000_000
+
+/** Cap on how many intersecting elements one region capture describes. */
+export const MAX_REGION_ELEMENTS = 30
+
 /** Error codes a tool call may settle with. Open set: consumers must tolerate unknown codes. */
 export type ToolErrorCode =
   | 'no-active-tab'

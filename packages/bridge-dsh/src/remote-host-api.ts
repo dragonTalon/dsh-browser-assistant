@@ -21,6 +21,10 @@ import {
   ExtensionSessionRegistry,
   shouldBridgeOwnQuestion,
 } from './extension-sessions.ts'
+import {
+  buildBridgeModelCatalog,
+  type ModelCatalogServices,
+} from './model-catalog.ts'
 import type { RespondResult } from '@dsh-browser/protocol'
 
 /** Structural subset of dsh 0.1.2's Host TypertGateway service. */
@@ -68,8 +72,9 @@ interface PendingQuestion {
 export function createRemoteHostApi(
   gateway: TypertGatewayLike,
   connection: HostConnectionLike,
+  modelServices?: ModelCatalogServices,
 ): BrowserHostApi {
-  return new RemoteHostApi(gateway, connection)
+  return new RemoteHostApi(gateway, connection, modelServices)
 }
 
 class RemoteHostApi implements BrowserHostApi {
@@ -88,6 +93,8 @@ class RemoteHostApi implements BrowserHostApi {
   constructor(
     private readonly gateway: TypertGatewayLike,
     connection: HostConnectionLike,
+    /** Probed `llm`/`agentDefaultModel` pair; absent → model.catalog fails cleanly. */
+    private readonly modelServices?: ModelCatalogServices,
   ) {
     this.fetchHandler = connection.createSharedFetchHandler('/api')
   }
@@ -95,6 +102,7 @@ class RemoteHostApi implements BrowserHostApi {
   async call(call: HostRpcCall): Promise<HostRpcResult> {
     if (call.method === 'session.history') return this.sessionHistory(call)
     if (call.method === 'workspace.list') return this.workspaceList(call)
+    if (call.method === 'model.catalog') return this.modelCatalog()
 
     const target = invokeTarget(call)
     if ('error' in target) return { ok: false, error: target.error }
@@ -246,6 +254,31 @@ class RemoteHostApi implements BrowserHostApi {
       }
     } catch (error: unknown) {
       return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * `model.catalog`: bridge-local, in-process read of the `llm` +
+   * `agentDefaultModel` services. Never touches the gateway; a missing
+   * service pair fails this call alone — connection, events, and every
+   * other RPC are unaffected (spec: 模型目录的提供).
+   */
+  private async modelCatalog(): Promise<HostRpcResult> {
+    if (this.modelServices === undefined) {
+      return {
+        ok: false,
+        error: {
+          code: 'llm-unavailable',
+          message: '模型目录服务（llm/agentDefaultModel）在本 dsh 部署中不可用',
+          details: {},
+        },
+      }
+    }
+    try {
+      const value = await buildBridgeModelCatalog(this.modelServices)
+      return { ok: true, value }
+    } catch (error: unknown) {
+      return { ok: false, error: hostFailure(error) }
     }
   }
 

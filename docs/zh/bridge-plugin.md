@@ -8,8 +8,9 @@
 
 | 文件 | 职责 |
 |---|---|
-| `index.ts` | 插件入口：`inject` 声明依赖、解析配置、注册路由/工具、dsh 版本探测 |
+| `index.ts` | 插件入口：`inject` 声明依赖、解析配置、注册路由/工具、dsh 版本探测、模型服务探测 |
 | `protocol.ts` → `@dsh-browser/protocol` | 帧类型+解析器（与扩展共享，唯一真相源） |
+| `model-catalog.ts` | 模型目录组装：`llm`/`agentDefaultModel` 的结构化窄接口 + 逐 provider 故障隔离 |
 | `server.ts` | WebSocket 服务器：鉴权、单连接、RPC 透传、工具分发、事件泵 |
 | `remote-host-api.ts` | **Host 适配层**：把 Typert Gateway + Connection 包装成 `BrowserHostApi` |
 | `host-api.ts` | 窄接口 `BrowserHostApi`（call/events/respond），隔离 dsh 版本差异 |
@@ -28,6 +29,16 @@
 - `tools`：`ctx.tools.register`（注册模型可调的工具）
 
 `remote-host-api.ts` 把这三者收敛成 `BrowserHostApi`，所以 dsh 版本演进只改这一处适配，不影响桥服务器和扩展。
+
+此外还有一组**探测式可选服务**（不进 `inject`，用 `ctx.get` 探测，缺失仅让 `model.catalog` 降级不立即使插件不可用）：
+
+- `llm`：`listProviders` / `listModels`——进程内唯一可达 `inputModalities`（多模态权威）的通道，dsh 的 `@Remote` 面都不含它
+- `agentDefaultModel`：`currentSelection`——部署默认模型选择
+
+### bridge 自定义 RPC
+
+- `session.history` / `workspace.list`：gateway `wireStream` 上的一层组装（快照展开 / baseline 取值）。
+- `model.catalog`：**纯进程内**读取 `llm`+`agentDefaultModel`，返回 `{ default, groups, failures }`；每个 provider 的目录查询独立 try/catch 进 `failures`，不拖垮其余；服务未探测到时返回 `llm-unavailable`，连接与其他 RPC 不受影响。
 
 ## 核心机制
 

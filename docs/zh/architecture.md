@@ -2,7 +2,7 @@
 
 # 整体架构
 
-dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）读取、操作用户**正在使用的真实浏览器标签页**。页面被渲染成纯文本结构化快照，模型按编号寻址元素，登录态/Cookie 全程保留。
+dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）读取、操作用户**正在使用的真实浏览器标签页**。页面被渲染成纯文本结构化快照，模型按编号寻址元素，登录态/Cookie 全程保留。当需要视觉理解时，用户还可以从侧边栏框选页面区域——裁剪出的选区截图连同该区域的 DOM 元素清单会被打包进 prompt，发送给支持视觉的模型。
 
 一句话：**「dsh 的浏览器执行终端」= 一个 dsh bridge 插件（服务端）+ 一个 Chrome MV3 扩展（浏览器端），中间一条自定义 WebSocket。**
 
@@ -42,12 +42,13 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 3. **会话**：面板 `session.create` / `session.prompt` → `rpc` 帧 → 桥转发给 Typert Gateway → dsh 执行 → `rpc.result`。
 4. **事件回传**：dsh 的会话事件（`user/message`、`assistant/message`、`turn/end`、`question/requested`）经 `event` 帧流式推给面板渲染。
 5. **浏览器操作**：模型调 `browser_*` → 桥发 `tool.call` → 扩展后台路由到 content script 执行 → `tool.result` 回给模型。
+6. **框选截图**：面板箭头按钮 → 后台 → content script 拖拽框选 overlay → 后台用 `captureVisibleTab` 按选区裁剪 → 面板预览 → `session.prompt` 携带选区图片块 + 元素清单（dsh 核心做图片入库并门控到视觉模型）。
 
 ## 关键设计决策
 
 | 决策 | 做法 | 为什么 |
 |---|---|---|
-| **文本优先，无截图** | 快照=标题/URL/正文/编号清单/表单；模型按编号操作 | DeepSeek 模型无视觉；文本省 token、可 diff |
+| **文本优先 + 用户框选截图** | 模型工具保持纯文本；面板新增用户发起的拖拽框选，裁剪截图并提取选区内 DOM 元素进 prompt | 工具侧文本省 token、可 diff；视觉是显式、用户确认的，且只投递给视觉模型 |
 | **窄接口隔离 dsh 版本** | 桥只依赖 `BrowserHostApi`（call/events/respond）三个方法 | dsh 0.1.1(ApiProxy) / 0.1.2(0.1.3)(Typert) 切换只换适配层 |
 | **单受控标签页** | 工具绑定一个标签页，首次调用时绑定活动页 | 不让模型静默切换/偷看其它标签页 |
 | **fail-closed 审批** | 读默认 auto；写操作一律审批，无面板即超时拒绝 | 安全边界在扩展后台，不赌模型自觉 |

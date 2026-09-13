@@ -20,7 +20,7 @@
 - **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`bridge-dsh` `0.0.3`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
 - **`packages/extension`** —— Chrome MV3 扩展，发布为 **`bridge-browser` `0.0.2`**（service worker + content script + side panel）。
 
-> DeepSeek 模型无视觉，整条链路**纯文本**：全程不截图。完整设计见 [docs/zh/architecture.md](docs/zh/architecture.md)。
+> 模型工具链路**纯文本**——页面渲染为结构化文本快照，工具侧不截图。另外，面板提供**用户主动**框选，可把选区截图（裁剪）发给**视觉模型**。完整设计见 [docs/zh/architecture.md](docs/zh/architecture.md)。
 
 ## 能力
 
@@ -32,6 +32,8 @@
 | 读区域/等待 | `browser_get_text` / `browser_wait` |
 | 问用户 | dsh 的 `ask_user_question` 显示在面板，作答回传模型 |
 | 页面感知 | 扩展追踪活动标签页，把 URL/标题注入每条消息作为上下文 |
+| 框选截图 | 用户从面板框选页面区域 → 裁剪截图 + 选区内 DOM 元素清单 → 发给视觉模型 |
+| 模型选择 | 面板连接后重拉 `model.catalog`；下拉框带能力标记（视觉/文本/未知）→ `session.selectModel` |
 
 安全模型：桥自带 bearer token；读默认放行，写操作 fail-closed 需面板审批；密码/卡号掩码、永不离开页面。
 
@@ -76,6 +78,14 @@ curl http://127.0.0.1:3080/ext/bridge-config
 pnpm install --frozen-lockfile
 pnpm build
 # → packages/bridge-dsh/lib/index.js  与  packages/extension/dist/
+```
+
+本地开发时注意：`dsh plugin add` 安装的是**打包快照**（`~/.dsh/profiles/<profile>/node_modules/bridge-dsh/`），重建 workspace 的 `lib/index.js` 不会影响正在运行的 dsh。每次改了 bridge 的源码后：
+
+```sh
+bash packages/bridge-dsh/build.sh       # 重建工作区产物
+bash scripts/sync-profile.sh            # 拷贝进已安装的插件目录（自动备份）
+# 然后重启 dsh（或重载该插件）让新 bundle 生效
 ```
 
 ## 发布版本
