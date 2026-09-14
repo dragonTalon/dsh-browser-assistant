@@ -3,7 +3,7 @@
   "include": ["src/**/*.ts"],
   "compilerOptions": {
     "paths": {
-      "@dsh-browser/protocol": ["../protocol/src/protocol.ts"]
+      "@dsh-browser/protocol": ["../protocol/src/index.ts"]
     }
   }
 }

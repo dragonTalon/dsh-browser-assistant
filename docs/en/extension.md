@@ -10,12 +10,15 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 |---|---|---|
 | **background/** | bridge client (discovery/reconnect/heartbeat), RPC forwarding, tool dispatch, approval coordination, current-page tracking, logging | `index.ts` (assembly), `bridge.ts`, `tools.ts`, `authorization.ts`, `approval-coordinator.ts` |
 | **content/** | page → text snapshot, perform click/type/scroll/navigate, stable numbering, sensitive masking | `snapshot.ts`, `extract.ts`, `actions.ts`, `ids.ts`, `privacy.ts` |
-| **panel/** | chat, status, model selection, region capture, Markdown rendering, logs, approval box, Q&A box | `main.ts` (composition root) + `transport`/`conversation`/`model-selector`/`region`/`question`/`approval`/`status`/`log` + shared `common/` (`tools/` + `ui/`); `index.html` |
+| **panel/** | chat, status, model selection, region capture, Markdown rendering, logs, approval box, Q&A box, system config | `main.ts` (composition root) + `transport`/`conversation`/`model-selector`/`region`/`question`/`approval`/`status`/`settings`/`errors`/`log` + shared `common/` (`tools/` + `ui/`); `index.html` |
 
 ## Core mechanisms
 
 ### Connection & liveness
-- **Discovery**: probe ports → `fetch /ext/bridge-config` → `WebSocket` → `hello` handshake.
+- **Discovery**: with an empty `host`, probe ports → `fetch /ext/bridge-config` → `WebSocket` → `hello` handshake.
+- **Remote dsh**: the gear button in the status bar opens the **System config** dialog for `dsh host` + `token`. Four address forms are accepted — `10.0.0.7:3080`, `localhost:3080`, `wss://dsh.example.com`, and a full `ws://host:port/ext/bridge`: a missing scheme gets `ws://` plus `/ext/bridge`, an explicit scheme is kept (`http`/`https` map to `ws`/`wss`), and a sub-path is preserved for reverse proxies mounted off the root. A non-empty `host` **never falls back to local discovery** — a wrong remote address must read as unreachable, not quietly connect to this machine.
+- **Verify at config time**: typing shows the effective address live (computed locally, no request); `Test connection` runs a full `hello` handshake on a **separate one-shot socket** (it never evicts the working connection) and reports the failure stage separately: malformed address / unreachable / reachable but token rejected (`4002`) / reachable but handshake timed out; `Save & reconnect` waits for the real reconnect and, on failure, keeps the dialog open with the input intact.
+- **Token**: mandatory for remote connections (the server enforces it for every non-loopback source, no exceptions). Read it on the dsh machine with `cat ~/.dsh/ext-bridge-token`; pasted **surrounding whitespace is stripped automatically** — the token file ends with a newline and the server compares bytes exactly, so keeping it would reliably produce `4002`.
 - **Reconnect**: exponential backoff (500ms→10s cap + jitter); `4000` means "superseded" and stops directly without mutual kicking.
 - **Anti SW suspension**: panel 20s heartbeat + 30s alarm, double insurance against idle suspension killing the WebSocket; on disconnect clears "working", on reconnect pulls `session.history` to recover missed final output.
 
@@ -49,8 +52,34 @@ An MV3 extension in three parts: **service worker (control center) + content scr
 
 | Boundary | Mechanism |
 |---|---|
-| Bridge auth | bearer token (5s hello, constant-time) |
+| Bridge auth | bearer token (5s hello, constant-time); mandatory for remote connections |
 | Loopback passwordless | only `chrome-extension://` Origin |
-| Privileged methods | reject `settings.*`/`credentials.*`/`host.open*` for non-loopback |
+| Privileged methods | non-loopback rejects `settings.*`/`credentials.*`/`host.openPath`/`host.pickDirectory` — **these features are unavailable on a remote connection**; the panel states it as "local dsh only" instead of echoing a raw error code |
+| Connection target | `connect-src` allows any `ws://`/`wss://` (needed for remote deployments); only the target widened — token auth, approvals, and the loopback fence are unchanged |
 | Page data | text-only, no screenshots; sensitive fields masked; untrusted-content wrapping |
 | Actions | writes fail-closed approval, reads follow ask/auto/off policy |
+
+### TLS reverse proxy (recommended for remote)
+
+Plain `ws://` across a network sends page snapshots, prompts, and the token in the clear. Terminate TLS in front of dsh and connect with `wss://`:
+
+```nginx
+# dsh web listens on 127.0.0.1:3080; the proxy exposes only wss
+server {
+  listen 443 ssl;
+  server_name dsh.example.com;
+  ssl_certificate     /etc/letsencrypt/live/dsh.example.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/dsh.example.com/privkey.pem;
+
+  location /ext/ {
+    proxy_pass http://127.0.0.1:3080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;      # /ext/bridge is a WebSocket upgrade
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;                    # the bridge keeps alive via ping; don't idle-timeout it
+  }
+}
+```
+
+Enter `wss://dsh.example.com` in the dialog (the extension appends `/ext/bridge`); for a sub-path mount enter the full path (e.g. `wss://dsh.example.com/dsh/ext/bridge`). The token is still `~/.dsh/ext-bridge-token` **on the remote machine**.

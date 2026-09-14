@@ -31,7 +31,8 @@ type BridgeProbe = (url: string) => Promise<boolean>
 
 const BACKOFF_BASE_MS = 500
 const BACKOFF_MAX_MS = 10_000
-const HELLO_ACK_TIMEOUT_MS = 5_000
+/** How long a fresh socket may take to answer `hello` before it is abandoned. */
+export const HELLO_ACK_TIMEOUT_MS = 5_000
 
 /**
  * Owns one WebSocket connection generation and the reconnect loop.

@@ -15,6 +15,8 @@ import * as modelSelector from './model-selector.ts'
 import * as region from './region.ts'
 import * as question from './question.ts'
 import * as approval from './approval.ts'
+import * as settings from './settings.ts'
+import * as errors from './errors.ts'
 
 const inputEl = document.getElementById('input') as HTMLTextAreaElement
 const sendBtn = document.getElementById('sendBtn') as HTMLButtonElement
@@ -92,9 +94,24 @@ function onPortMessage(message: unknown): void {
   const msg = message as { type?: string }
   switch (msg.type) {
     case 'status': {
-      const s = msg as { state: BridgeState; url?: string; attempt?: number; activePage?: { url: string; title: string } | null }
+      const s = msg as {
+        state: BridgeState
+        url?: string
+        attempt?: number
+        activePage?: { url: string; title: string } | null
+        settings?: settings.PanelSettings & { loopback?: boolean }
+      }
       setStatus(s.state, s.url ?? '', s.attempt ?? 0)
       setActivePage(s.activePage ?? null)
+      if (s.settings !== undefined) {
+        settings.rememberSettings(s.settings)
+        // Decides whether a `forbidden` failure is explained as a remote
+        // limitation rather than echoed as a bare code.
+        errors.setRemoteConnection(s.settings.loopback !== true)
+      }
+      // A saved configuration only counts as working once the bridge reports it
+      // connected; until then the dialog waits (see settings.applyConnectionState).
+      settings.applyConnectionState(s.state)
       const wasConnected = lastState === 'connected'
       lastState = s.state
       modelSelector.setConnected(s.state === 'connected')
@@ -134,6 +151,15 @@ function onPortMessage(message: unknown): void {
     case 'region.result':
       region.handleRegionResult((msg as { result: unknown }).result)
       break
+    case 'bridge.test.result':
+      settings.applyTestResult(msg as { id: string; result: settings.BridgeTestResult })
+      break
+    case 'settings.applied': {
+      const applied = msg as { ok: boolean; error?: string; pendingUrl?: string; settings?: settings.PanelSettings }
+      if (applied.settings !== undefined) settings.rememberSettings(applied.settings)
+      settings.applySettingsApplied(applied.ok, applied.error ?? '连接失败', applied.pendingUrl ?? '')
+      break
+    }
   }
 }
 
@@ -145,6 +171,7 @@ question.initQuestion()
 approval.initApproval()
 region.initRegion()
 modelSelector.initModelSelector()
+settings.initSettings()
 
 sendBtn.addEventListener('click', () => { void send() })
 inputEl.addEventListener('keydown', (e) => {

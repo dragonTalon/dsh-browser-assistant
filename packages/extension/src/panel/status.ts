@@ -23,9 +23,29 @@ export function setStatus(state: BridgeState, url = '', attempt = 0): void {
   statusEl.className = state
   statusText.textContent = STATE_LABELS[state] ?? state
   const attemptSuffix = state === 'reconnecting' && attempt > 0 ? `（第 ${attempt} 次）` : ''
-  statusUrlEl.textContent = url !== ''
-    ? `${attemptSuffix}${url.replace('ws://127.0.0.1:', ':')}`
-    : attemptSuffix
+  statusUrlEl.textContent = `${attemptSuffix}${compactAddress(url)}`
+  statusUrlEl.title = url
+}
+
+/**
+ * Render a bridge URL for the status row. A loopback endpoint keeps the
+ * historical compact form (the host carries no information when there is only
+ * one possible local dsh); anything else keeps its full `host:port` so the
+ * user can tell a remote connection from a local one at a glance.
+ * @param url - the bridge WebSocket URL, or `''` when no endpoint is known.
+ * @returns the text to show in the status row.
+ */
+export function compactAddress(url: string): string {
+  if (url === '') return ''
+  try {
+    const parsed = new URL(url)
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+    const loopback = host === 'localhost' || host === '::1' || host.startsWith('127.') || host.startsWith('::ffff:127.')
+    const address = `${parsed.host}${parsed.pathname}`
+    return loopback ? address.replace(/^127\.0\.0\.1/, '') : address
+  } catch {
+    return url
+  }
 }
 
 /** Update the "current page" line, or reset to a dash when none is tracked. */

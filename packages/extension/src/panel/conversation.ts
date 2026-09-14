@@ -9,6 +9,7 @@
  */
 
 import { rpc } from './transport.ts'
+import { describeRpcError } from './errors.ts'
 import { conversationRow, createWorkingRow, renderMarkdown, type WorkingRow } from '../common/index.ts'
 
 const logEl = document.getElementById('log')!
@@ -137,7 +138,7 @@ export async function ensureSession(): Promise<boolean> {
         appendSystem(`会话 ${sessionId.slice(0, 8)}…`)
         return true
       } catch (e) {
-        appendSystem(`创建会话失败: ${String(e)}`)
+        appendSystem(`创建会话失败: ${describeRpcError(e)}`)
         return false
       }
     })().finally(() => { sessionPromise = null })
@@ -154,7 +155,7 @@ export async function sendText(text: string): Promise<void> {
     await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
   } catch (e) {
     setWorking(false)
-    appendSystem(`发送失败: ${String(e)}`)
+    appendSystem(`发送失败: ${describeRpcError(e)}`)
   }
 }
 

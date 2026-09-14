@@ -35,7 +35,7 @@ One pnpm workspace, two halves joined by one WebSocket:
 | Region capture | user drag-selects a page region → cropped screenshot + DOM element list → sent to a vision-capable model |
 | Model selection | panel re-pulls `model.catalog` on connect; dropdown with capability badge (vision / text / unknown) → `session.selectModel` |
 
-Security model: the bridge carries its own bearer token; reads are auto-allowed, state-changing actions fail closed behind a side-panel approval; passwords/card numbers are masked and never leave the page.
+Security model: the bridge carries its own bearer token; reads are auto-allowed, state-changing actions fail closed behind a side-panel approval; passwords/card numbers are masked and never leave the page. A remote connection requires the token and relaxes none of the above.
 
 ## Requirements
 
@@ -50,8 +50,10 @@ The bridge plugin is published to [npm](https://www.npmjs.com/package/bridge-dsh
 ### 1. Install the bridge plugin (from npm)
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@latest"
+dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
 ```
+
+> **Pin the version — do not use `@latest`.** Since pnpm 11, `minimumReleaseAge` defaults to `1440` minutes (1 day): a version published less than a day ago is held back, and a dist-tag like `@latest` **silently resolves to the previous version** instead of failing. `--config.minimumReleaseAge=0` lifts that wait for this one install. The bridge plugin and the extension are a versioned pair, so always install the version that matches your `bridge-browser` zip.
 
 ### 2. Download the Chrome extension
 
@@ -71,6 +73,12 @@ curl http://127.0.0.1:3080/ext/bridge-config
 ### 4. Load the extension
 
 Unzip `bridge-browser-0.1.0.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+
+### 5. Remote dsh (optional)
+
+If dsh runs on another machine, open the panel's **System config** (gear button in the status bar), enter the address (`10.0.0.7:3080` or `wss://dsh.example.com`) and the token from that machine (`cat ~/.dsh/ext-bridge-token`), then press **Test connection** before saving — it performs one isolated handshake and tells you whether the address is unreachable or the token was rejected. Leaving the address empty keeps the zero-config local discovery.
+
+Methods pinned to loopback (`settings.*`, `credentials.*`, `host.openPath`, `host.pickDirectory`) stay unavailable over a remote connection — that is the bridge's own trust fence, not a bug in the dialog.
 
 ### Build from source (optional)
 
@@ -99,7 +107,7 @@ The two halves are released independently:
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@latest"` (a `bridge-dsh-0.1.0.tgz` is also attached to its release)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.1.0.tgz` is also attached to its release)
 - `bridge-browser-0.1.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout

@@ -44,7 +44,7 @@ fi
 
 rm -rf dist
 mkdir -p dist/panel
-ALIAS="--alias:@dsh-browser/protocol=../protocol/src/protocol.ts"
+ALIAS="--alias:@dsh-browser/protocol=../protocol/src/index.ts"
 
 # Markdown 渲染依赖（仅 panel 用）：本环境无 npm registry，alias 指向本地
 # deepseek-harness checkout 的 .pnpm 物理路径。换机或升级版本时需同步更新。

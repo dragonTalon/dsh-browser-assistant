@@ -131,9 +131,49 @@
     button:hover { border-color: rgba(128,128,128,.7); }
     button.primary { background: #2e86de; color: #fff; border-color: #2e86de; }
     button.primary:hover { background: #2574c2; }
+    button.primary:disabled, button:disabled { opacity: .5; cursor: default; }
     button.danger { background: #e74c3c; color: #fff; border-color: #e74c3c; }
     button.danger:hover { background: #cf3f31; }
     #regionBtn { flex: none; font-size: 15px; padding: 6px 10px; }
+
+    /* ---- 系统配置（状态栏入口 → 模态浮层） ---- */
+    #settingsToggle { flex: none; display: flex; align-items: center; justify-content: center; padding: 3px 7px; }
+    #settingsOverlay {
+      display: none; position: fixed; inset: 0; z-index: 20;
+      background: rgba(0,0,0,.45); align-items: flex-start; justify-content: center;
+      padding: 24px 12px;
+    }
+    #settingsOverlay.open { display: flex; }
+    #settingsDialog {
+      width: 100%; max-width: 420px; max-height: 100%; overflow-y: auto;
+      background: #fff; color: #111; border-radius: 10px;
+      border: 1px solid rgba(128,128,128,.35); box-shadow: 0 12px 32px rgba(0,0,0,.35);
+      padding: 14px;
+    }
+    @media (prefers-color-scheme: dark) { #settingsDialog { background: #262626; color: #eee; } }
+    #settingsDialog h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+    #settingsDialog .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+    #settingsDialog .field > label { font-size: 12px; color: #8a8a8a; }
+    #settingsDialog input[type=text], #settingsDialog input[type=password] {
+      width: 100%; padding: 6px 8px; border-radius: 6px; font: inherit; font-size: 12px;
+      border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit;
+    }
+    #settingsEffective { font-size: 11px; color: #8a8a8a; word-break: break-all; }
+    #settingsEffective.invalid { color: #c0392b; }
+    #settingsEffective.warn { color: #b9770e; }
+    #settingsHint { font-size: 11px; color: #8a8a8a; line-height: 1.4; }
+    #settingsHint code { font-family: ui-monospace, Menlo, monospace; background: rgba(128,128,128,.15); padding: 0 3px; border-radius: 3px; }
+    #settingsResult { display: none; font-size: 11px; line-height: 1.5; padding: 7px 9px; border-radius: 6px; margin-bottom: 10px; word-break: break-word; }
+    #settingsResult.show { display: block; }
+    #settingsResult.pending { background: rgba(46,134,222,.1); color: #2e86de; }
+    #settingsResult.ok { background: rgba(46,204,113,.14); color: #0b7a3e; }
+    #settingsResult.error { background: rgba(231,76,60,.12); color: #c0392b; }
+    @media (prefers-color-scheme: dark) {
+      #settingsResult.ok { color: #7ce0a6; }
+      #settingsResult.error { color: #ff8b7d; }
+    }
+    #settingsActions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #settingsActions .spacer { flex: 1; }
   </style>
 </head>
 <body>
@@ -144,10 +184,42 @@
       <span id="statusText">stopped</span>
       <span id="statusUrl"></span>
       <button id="logToggle" class="log">日志</button>
+      <button id="settingsToggle" title="系统配置：dsh 地址与 token" aria-label="系统配置">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
     </div>
     <div class="row" id="pageRow">
       <span class="label">当前页</span>
       <span id="pageUrl">—</span>
+    </div>
+  </div>
+  <div id="settingsOverlay" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div id="settingsDialog">
+      <h2 id="settingsTitle">系统配置</h2>
+      <div class="field">
+        <label for="settingsHost">dsh host</label>
+        <input id="settingsHost" type="text" spellcheck="false" autocomplete="off"
+               placeholder="10.0.0.7:3080 或 wss://dsh.example.com（留空＝自动发现本机 dsh）">
+        <div id="settingsEffective">留空：自动发现本机 dsh</div>
+      </div>
+      <div class="field">
+        <label for="settingsToken">token</label>
+        <input id="settingsToken" type="password" spellcheck="false" autocomplete="off" placeholder="连接本机 dsh 时留空即可">
+        <div id="settingsHint">
+          远端 dsh 必须填 token。本机可执行 <code>cat ~/.dsh/ext-bridge-token</code> 获取（粘贴时的换行会自动忽略）。
+        </div>
+      </div>
+      <div id="settingsResult"></div>
+      <div id="settingsActions">
+        <button id="settingsTest">测试连接</button>
+        <button id="settingsSave" class="primary">保存并重连</button>
+        <button id="settingsReset">恢复本机自动发现</button>
+        <span class="spacer"></span>
+        <button id="settingsClose">关闭</button>
+      </div>
     </div>
   </div>
   <div id="logPanel"></div>

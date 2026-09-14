@@ -9,6 +9,7 @@
  */
 
 import { rpc } from './transport.ts'
+import { describeCodeSuffix, describeRpcError } from './errors.ts'
 import { ensureSession, appendSystem, getSessionId } from './conversation.ts'
 import { el, errorCode } from '../common/index.ts'
 
@@ -128,7 +129,7 @@ export async function loadCatalog(): Promise<void> {
   } catch (error: unknown) {
     catalog = null
     const code = errorCode(error)
-    appendSystem(`模型目录加载失败${typeof code === 'string' ? ` [${code}]` : ''}: ${error instanceof Error ? error.message : String(error)}`)
+    appendSystem(`模型目录加载失败${describeCodeSuffix(code)}: ${describeRpcError(error)}`)
   } finally {
     catalogLoading = false
     renderModelRow()
@@ -183,7 +184,7 @@ async function onModelChange(): Promise<void> {
   } catch (error: unknown) {
     currentSelection = previous
     const code = errorCode(error)
-    appendSystem(`切换模型失败${typeof code === 'string' ? ` [${code}]` : ''}: ${error instanceof Error ? error.message : String(error)}`)
+    appendSystem(`切换模型失败${describeCodeSuffix(code)}: ${describeRpcError(error)}`)
   } finally {
     selectingModel = false
     renderModelRow()

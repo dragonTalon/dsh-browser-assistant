@@ -24,7 +24,7 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 │    content/     page side (the only DOM-touching part): snapshot/click/│
 │                 input/privacy masking                                  │
 │    panel/       side panel: chat, model selection, region capture,     │
-│                 markdown, status/logs, approval, Q&A (8 thin modules)  │
+│                 markdown, status/logs, approval, Q&A, system config (10 thin modules)  │
 │    common/      shared stateless tools + UI components (reusable)      │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -39,11 +39,11 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 
 **The protocol is the single source of truth**: both sides import the same `protocol.ts`, so frame structures cannot drift; the `isServerFrame`/`isClientFrame` type guards separate send/receive directions at the type level.
 
-**Code organization & type safety**: the extension splits into `background/` (control center), `content/` (the only DOM-touching part), `panel/` (a thin composition root over 8 single-responsibility modules), and a shared `common/` (`tools/` + `ui/`) reused across surfaces. All three packages type-check with `tsc` — the extension ships a local `chrome.d.ts` + `vendor.d.ts` because no `@types/chrome` is available offline.
+**Code organization & type safety**: the extension splits into `background/` (control center), `content/` (the only DOM-touching part), `panel/` (a thin composition root over 10 single-responsibility modules), and a shared `common/` (`tools/` + `ui/`) reused across surfaces. All three packages type-check with `tsc` — the extension ships a local `chrome.d.ts` + `vendor.d.ts` because no `@types/chrome` is available offline.
 
 ## End-to-end data flow
 
-1. **Discovery**: the extension probes ports `3080/3081/3090/14389/43189` and `fetch /ext/bridge-config` to get the wsUrl.
+1. **Discovery**: with an empty `host` the extension probes ports `3080/3081/3090/14389/43189` and `fetch /ext/bridge-config` to get the wsUrl; with a configured `host` it connects to that address directly (`ws://` and `/ext/bridge` appended as needed) — only the connection itself can fail, and it never falls back to local discovery. A remote address can be verified first with `Test connection` in the panel's System config, which runs one isolated handshake.
 2. **Handshake**: after the WebSocket connects, the first frame must be `hello{token,caps}` (5s timeout); the server validates the token → replies `hello.ok` (negotiates the snapshot budget).
 3. **Session**: panel `session.create` / `session.prompt` → `rpc` frame → bridge forwards to Typert Gateway → dsh executes → `rpc.result`.
 4. **Event stream**: dsh session events (`user/message`, `assistant/message`, `turn/end`, `question/requested`) are streamed to the panel as `event` frames.
@@ -60,5 +60,5 @@ In one sentence: **"a browser execution terminal for dsh" = a dsh bridge plugin 
 | **Fail-closed approval** | reads default to auto; every write requires approval, no panel → timeout reject | the security boundary lives in the extension background, not in model goodwill |
 | **Stable element numbering** | WeakMap one-time id assignment + `data-dsh-el` marker | addressable across snapshots, avoids mis-clicks after re-render |
 | **Sensitive fields never leak** | passwords/card numbers/CVV masked as `••••`; page text wrapped in an untrusted marker | the snapshot is the only text exit, must be blocked here |
-| **Shared common area, typed panel** | UI components + tools live once in `common/`; the panel is a composition root over 8 modules; `tsc` gates all three packages | no god-module; reuse instead of rewrite; type errors are caught before shipping |
+| **Shared common area, typed panel** | UI components + tools live once in `common/`; the panel is a composition root over 10 modules; `tsc` gates all three packages | no god-module; reuse instead of rewrite; type errors are caught before shipping |
 | **MV3 survivability** | panel 20s heartbeat + 30s alarm reconnect + disconnect recovery | SW idle suspension kills WebSockets, must be counteracted |

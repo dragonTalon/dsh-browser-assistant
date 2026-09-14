@@ -10,11 +10,14 @@
  *   panel → bg: { type: 'rpc', id, method, payload }
  *   panel → bg: { type: 'respond', id, rpcId, result }
  *   panel → bg: { type: 'settings', settings }
+ *   panel → bg: { type: 'bridge.test', id, host, token }
  *   panel → bg: { type: 'approval.response', id, decision }
  *   panel → bg: { type: 'request-status' }
  *   bg → panel: { type: 'rpc.result', id, ok, result? | error? }
  *   bg → panel: { type: 'respond.result', id, ok, result? | error? }
  *   bg → panel: { type: 'status', state, caps? }
+ *   bg → panel: { type: 'bridge.test.result', id, result }
+ *   bg → panel: { type: 'settings.applied', ok, error, pendingUrl, settings }
  *   bg → panel: { type: 'event', frame }
  *   bg → panel: { type: 'approval.request', request }
  *   bg → panel: { type: 'approval.resolved', id }
@@ -22,9 +25,21 @@
  * @module
  */
 
-import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, buildPageContext, isRespondResult, type BridgeCaps, type RespondResult, type ToolError } from '@dsh-browser/protocol'
+import {
+  BRIDGE_CONFIG_PATH,
+  buildPageContext,
+  DEFAULT_SNAPSHOT_MAX_CHARS,
+  isRespondResult,
+  normalizeBridgeToken,
+  parseBridgeFrame,
+  resolveBridgeHost,
+  type BridgeCaps,
+  type BridgeHostResolution,
+  type RespondResult,
+  type ToolError,
+} from '@dsh-browser/protocol'
 import type { ServerFrame } from '@dsh-browser/protocol'
-import { BridgeClient, type BridgeState } from './bridge.ts'
+import { BridgeClient, HELLO_ACK_TIMEOUT_MS, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
 import { dispatchOpenTab, dispatchToolCall, type ToolAnswer, type ToolCall } from './tools.ts'
 import { requestRegionSelection, type RegionCaptureResult } from './region.ts'
@@ -33,13 +48,14 @@ import { ApprovalCoordinator, type ApprovalRequestResult } from './approval-coor
 
 /** User settings persisted in chrome.storage.local. */
 export interface Settings {
-  bridgeUrl: string
+  /** dsh address as the user typed it; empty means "discover a local dsh". */
+  host: string
   token: string
   sharePageContent: 'ask' | 'auto' | 'off'
 }
 
 const SETTINGS_DEFAULTS: Settings = {
-  bridgeUrl: '',
+  host: '',
   token: '',
   sharePageContent: 'auto',
 }
@@ -47,6 +63,8 @@ const SETTINGS_DEFAULTS: Settings = {
 /** Auto-discovery candidate ports (dsh web defaults and common fallbacks). */
 const DISCOVERY_PORTS = [3080, 3081, 3090, 14389, 43189]
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
+/** A settings object as an earlier release persisted it. */
+type LegacySettings = Partial<Settings> & { bridgeUrl?: unknown }
 
 let settings: Settings = { ...SETTINGS_DEFAULTS }
 let caps: BridgeCaps | null = null
@@ -140,11 +158,26 @@ function probeBridge(url: string): Promise<boolean> {
 
 const STORAGE_KEY = 'dshSettings'
 
+/**
+ * Read persisted settings, migrating the pre-`host` schema. An earlier release
+ * stored an already-resolved `bridgeUrl`; only loopback addresses were
+ * reachable back then, so those map onto "discover a local dsh" and any other
+ * value is carried over as a user-typed host.
+ * @returns the settings to use for this session.
+ */
 async function loadSettings(): Promise<Settings> {
   const stored = await chrome.storage.local.get(STORAGE_KEY)
-  const loaded = { ...SETTINGS_DEFAULTS, ...(stored[STORAGE_KEY] as Partial<Settings> | undefined) }
-  if (loaded.bridgeUrl === LEGACY_LOCAL_URL) loaded.bridgeUrl = ''
-  return loaded
+  const raw = (stored[STORAGE_KEY] ?? {}) as LegacySettings
+  const host = typeof raw.host === 'string'
+    ? raw.host
+    : typeof raw.bridgeUrl === 'string' && raw.bridgeUrl !== '' && raw.bridgeUrl !== LEGACY_LOCAL_URL
+      ? raw.bridgeUrl
+      : ''
+  return {
+    host,
+    token: typeof raw.token === 'string' ? raw.token : SETTINGS_DEFAULTS.token,
+    sharePageContent: raw.sharePageContent ?? SETTINGS_DEFAULTS.sharePageContent,
+  }
 }
 
 async function persistSettings(next: Partial<Settings>): Promise<void> {
@@ -153,6 +186,25 @@ async function persistSettings(next: Partial<Settings>): Promise<void> {
 }
 
 const settingsReady = loadSettings().then((loaded) => { settings = loaded })
+
+/**
+ * Resolve the endpoint to connect to for the current settings. A configured
+ * host always wins: silently falling back to a local dsh would make a wrong
+ * remote address look like a working one.
+ * @param shouldContinue - abort guard shared with the discovery probe.
+ * @returns the endpoint url, or undefined when nothing is configured/found.
+ */
+async function resolveBridgeUrl(shouldContinue: () => boolean): Promise<string | undefined> {
+  if (settings.host.trim() === '') {
+    return discoverBridge(shouldContinue) ?? undefined
+  }
+  const resolved: BridgeHostResolution = resolveBridgeHost(settings.host)
+  if (!resolved.ok) {
+    emitLog('error', `桥地址无效：${resolved.message}`)
+    return undefined
+  }
+  return resolved.url
+}
 
 function armBridgeKeepalive(): void {
   // Chrome alarms 周期最小值是 0.5 分钟（30 秒）；面板侧另有 20s 心跳来
@@ -172,9 +224,30 @@ function broadcastStatus(): void {
     url: bridge?.url ?? '',
     attempt: bridge?.attemptCount ?? 0,
     activePage,
+    // The dialog must show what is actually in effect (host after auto-discovery
+    // too), so the effective values ride along with every status broadcast.
+    settings: effectiveSettings(),
   }
   for (const port of panelPorts) {
     try { port.postMessage(payload) } catch { /* closed */ }
+  }
+}
+
+/**
+ * Settings as the panel should render them: the persisted host/token plus the
+ * address the bridge actually resolved (empty while nothing is resolved yet).
+ * The panel lives in the same extension origin as this worker, so the token
+ * already crosses this boundary — it is never sent to a page.
+ * @returns the panel-facing settings snapshot.
+ */
+function effectiveSettings(): Record<string, unknown> {
+  const resolved = resolveBridgeHost(settings.host)
+  return {
+    host: settings.host,
+    token: settings.token,
+    effectiveUrl: resolved.ok ? resolved.url : '',
+    loopback: resolved.ok ? resolved.loopback : false,
+    plaintext: resolved.ok ? resolved.plaintext : false,
   }
 }
 
@@ -184,25 +257,33 @@ function broadcastEvent(frame: ServerFrame): void {
   }
 }
 
-/** Start (or restart) the bridge with current settings. */
-async function startBridge(): Promise<void> {
+/**
+ * Start (or restart) the bridge with current settings.
+ * @returns whether a connectable address was found, plus why not when it was not.
+ */
+async function startBridge(): Promise<BridgeStartOutcome> {
   const revision = ++bridgeStartRevision
-  if (panelPorts.size === 0) return
-  let url = settings.bridgeUrl
-  if (url === '') {
-    url = await discoverBridge(() => revision === bridgeStartRevision && panelPorts.size > 0) ?? ''
+  if (panelPorts.size === 0) return { ok: false, url: '', error: '面板已关闭，未建立连接' }
+  const url = await resolveBridgeUrl(() => revision === bridgeStartRevision && panelPorts.size > 0)
+  if (revision !== bridgeStartRevision || panelPorts.size === 0) {
+    return { ok: false, url: '', error: '已有更新的连接请求，本次保存被取代' }
   }
-  if (revision !== bridgeStartRevision || panelPorts.size === 0) return
-  if (url === '') {
-    emitLog('warn', '未发现本机 dsh（探测 3080/3081/3090/14389/43189 均无响应）')
+  if (url === undefined || url === '') {
+    const configured = settings.host.trim() !== ''
+    let error: string
+    if (configured) {
+      const resolved = resolveBridgeHost(settings.host)
+      error = resolved.ok
+        ? `地址不可达：无法连接到 ${settings.host}（网络不可达、端口未开放或被防火墙拦截）`
+        : resolved.message
+      emitLog('error', `桥地址无法使用：${settings.host}`)
+    } else {
+      error = '未发现本机 dsh（探测 3080/3081/3090/14389/43189 均无响应）'
+      emitLog('warn', error)
+    }
     bridge?.stop(); bridge = null; rpc = null; broadcastStatus()
-    return
+    return { ok: false, url: '', error }
   }
-  try {
-    const parsed = new URL(url)
-    if (parsed.pathname === '' || parsed.pathname === '/') parsed.pathname = BRIDGE_PATH
-    url = parsed.toString()
-  } catch { /* let the WebSocket constructor surface the error */ }
   emitLog('info', `正在连接桥 ${url}`)
   if (bridge === null) {
     const client = new BridgeClient({
@@ -231,7 +312,114 @@ async function startBridge(): Promise<void> {
     bridge = client
     rpc = createRpc(client)
   }
-  bridge.start(url, settings.token)
+  bridge.start(url, normalizeBridgeToken(settings.token))
+  // Reaching here only means the socket is opening: the connect outcome arrives
+  // as a later `status` broadcast (connecting → connected | reconnecting), which
+  // is why the panel waits for it before claiming the configuration works.
+  return { ok: true, url }
+}
+
+/** Result of one {@link startBridge} attempt, reported back to the config dialog. */
+export type BridgeStartOutcome =
+  | { ok: true; url: string }
+  | { ok: false; url: string; error: string }
+
+/**
+ * Which stage of a one-shot verification failed. Reported separately because
+ * each has a different fix: a malformed address, a server that is down or
+ * misrouted, and a wrong token must never collapse into one "failed" message.
+ */
+export type BridgeTestFailurePhase = 'invalid-address' | 'unusable-url' | 'unreachable' | 'token-rejected' | 'handshake-timeout'
+
+/** Outcome of one connection test. */
+export type BridgeTestResult =
+  | { ok: true; url: string; caps: BridgeCaps }
+  | { ok: false; phase: BridgeTestFailurePhase; message: string }
+
+/**
+ * Verify a host/token pair the user just typed, WITHOUT touching the live
+ * connection. The bridge owns a single active slot and evicts the previous
+ * socket with close code 4000, which the client treats as a permanent
+ * handoff — reusing {@link BridgeClient} here would kill a working session.
+ * @param id - panel correlation id, echoed back in the result message.
+ * @param host - raw host input.
+ * @param token - raw token input.
+ */
+async function testBridge(id: string, host: string, token: string): Promise<void> {
+  const result = await probeBridgeEndpoint(host, token)
+  for (const port of panelPorts) {
+    try { port.postMessage({ type: 'bridge.test.result', id, result }) } catch { /* closed */ }
+  }
+}
+
+/**
+ * One-shot handshake against a candidate endpoint: connect, send `hello`, wait
+ * for `hello.ok`. The full handshake is the point — a transport-level probe
+ * would report a wrong token as success and send the user into an endless
+ * reconnect loop while believing the configuration works.
+ * @param host - raw host input.
+ * @param token - raw token input.
+ * @returns the negotiated capabilities, or the stage that failed.
+ */
+function probeBridgeEndpoint(host: string, token: string): Promise<BridgeTestResult> {
+  const resolved: BridgeHostResolution = resolveBridgeHost(host)
+  if (!resolved.ok) return Promise.resolve({ ok: false, phase: 'invalid-address', message: resolved.message })
+  if (resolved.url === '') {
+    return Promise.resolve({ ok: false, phase: 'unusable-url', message: '请先填写 dsh 地址；留空只会连接本机 dsh' })
+  }
+  const url = resolved.url
+  const bearer = normalizeBridgeToken(token)
+  return new Promise<BridgeTestResult>((resolve) => {
+    let socket: WebSocket
+    try {
+      socket = new WebSocket(url)
+    } catch (error: unknown) {
+      resolve({ ok: false, phase: 'unusable-url', message: `地址无法建立连接：${error instanceof Error ? error.message : String(error)}` })
+      return
+    }
+    let settled = false
+    // Declared before `finish` so the settle path never reads it in its TDZ.
+    const timer = setTimeout(() => {
+      finish({ ok: false, phase: 'handshake-timeout', message: `已连上 ${url}，但 ${HELLO_ACK_TIMEOUT_MS / 1000} 秒内没有收到 dsh 的握手应答` })
+    }, HELLO_ACK_TIMEOUT_MS)
+    const finish = (result: BridgeTestResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close()
+      resolve(result)
+    }
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({
+        t: 'hello',
+        token: bearer,
+        caps: { textOnly: true, snapshotMaxChars: DEFAULT_SNAPSHOT_MAX_CHARS, maxInteractiveItems: 60 },
+      }))
+    })
+    socket.addEventListener('message', (event) => {
+      const frame = parseBridgeFrame(String(event.data))
+      if (frame === undefined) return
+      if (frame.t === 'hello.ok') {
+        finish({ ok: true, url, caps: frame.caps })
+        return
+      }
+      if (frame.t === 'error') finish({ ok: false, phase: 'handshake-timeout', message: `dsh 拒绝了握手：${frame.message}` })
+    })
+    socket.addEventListener('error', () => {
+      // Transport-level failure. An authenticated rejection (4002) arrives as a
+      // clean close instead — verified against the real bridge: empty and wrong
+      // tokens both produce `close(4002, "bad token")` with no error event.
+      finish({ ok: false, phase: 'unreachable', message: `无法连接到 ${url}（网络不可达、端口未开放或被防火墙拦截）` })
+    })
+    socket.addEventListener('close', (event) => {
+      // The bridge closes with 4002 when the bearer token does not match.
+      if (event.code === 4002) {
+        finish({ ok: false, phase: 'token-rejected', message: `${url} 可达，但 token 被拒绝（dsh 侧提示：${event.reason === '' ? 'bad token' : event.reason}）` })
+        return
+      }
+      finish({ ok: false, phase: 'unreachable', message: `连接 ${url} 被关闭（code ${event.code}${event.reason === '' ? '' : `: ${event.reason}`}）` })
+    })
+  })
 }
 
 async function gatewayRpc(method: string, payload: unknown): Promise<unknown> {
@@ -390,11 +578,40 @@ chrome.runtime.onConnect.addListener((port) => {
         break
       }
       case 'settings': {
-        const settingsMsg = message as { settings: Partial<Settings> }
+        const settingsMsg = message as { settings?: Partial<Settings> }
+        const patch = settingsMsg.settings ?? {}
         void settingsReady.then(async () => {
-          await persistSettings(settingsMsg.settings)
-          if (panelPorts.size > 0) await startBridge()
+          // The panel sends the host/token exactly as typed; normalize here so
+          // storage holds the value the handshake will actually use.
+          await persistSettings({
+            ...patch,
+            ...(patch.host === undefined ? {} : { host: patch.host.trim() }),
+            ...(patch.token === undefined ? {} : { token: normalizeBridgeToken(patch.token) }),
+          })
+          const outcome: BridgeStartOutcome = panelPorts.size > 0
+            ? await startBridge()
+            : { ok: false, url: '', error: '面板已关闭，未建立连接' }
+          try {
+            port.postMessage({
+              type: 'settings.applied',
+              ok: outcome.ok,
+              error: outcome.ok ? '' : outcome.error,
+              // A successful start means the socket is only now opening; the
+              // panel waits for the following status broadcast to learn whether
+              // it actually connected, so it can report the real outcome.
+              pendingUrl: outcome.ok ? outcome.url : '',
+              settings: effectiveSettings(),
+            })
+          } catch { /* closed */ }
         })
+        break
+      }
+      case 'bridge.test': {
+        const testMsg = message as { id?: unknown; host?: unknown; token?: unknown }
+        if (typeof testMsg.id !== 'string' || typeof testMsg.host !== 'string') break
+        const token = typeof testMsg.token === 'string' ? testMsg.token : ''
+        emitLog('info', `面板测试桥连接：${testMsg.host === '' ? '(未填写地址)' : testMsg.host}`)
+        void testBridge(testMsg.id, testMsg.host, token)
         break
       }
       case 'approval.response': {

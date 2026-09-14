@@ -22,7 +22,7 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 │    background/  service worker：桥客户端、RPC、工具分发、审批、状态日志  │
 │    content/     页面侧（唯一接触 DOM）：快照/点击/输入/隐私遮蔽           │
 │    panel/       侧边栏：对话、模型选择、框选截图、Markdown、              │
-│                 状态/日志、审批、问答（8 个薄模块）                       │
+│                 状态/日志、审批、问答、系统配置（10 个薄模块）                       │
 │    common/      共享无状态工具 + UI 组件（可复用）                        │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -37,11 +37,11 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 
 **协议是唯一真相源**：`protocol.ts` 被两端 import 同一份文件，帧结构不可能漂移；`isServerFrame`/`isClientFrame` 类型守卫把收发方向在类型层面分开。
 
-**代码组织与类型安全**：扩展拆为 `background/`（控制中心）、`content/`（唯一接触 DOM）、`panel/`（8 个单一职责模块上方的薄组装根）、以及跨界面复用的共享 `common/`（`tools/` + `ui/`）。三个包均用 `tsc` 做类型检查——扩展自带本地 `chrome.d.ts` + `vendor.d.ts`（离线环境无 `@types/chrome`）。
+**代码组织与类型安全**：扩展拆为 `background/`（控制中心）、`content/`（唯一接触 DOM）、`panel/`（10 个单一职责模块上方的薄组装根）、以及跨界面复用的共享 `common/`（`tools/` + `ui/`）。三个包均用 `tsc` 做类型检查——扩展自带本地 `chrome.d.ts` + `vendor.d.ts`（离线环境无 `@types/chrome`）。
 
 ## 端到端数据流
 
-1. **发现**：扩展探测端口 `3080/3081/3090/14389/43189`，`fetch /ext/bridge-config` 拿到 wsUrl。
+1. **发现**：`host` 留空时扩展探测端口 `3080/3081/3090/14389/43189`，`fetch /ext/bridge-config` 拿到 wsUrl；`host` 非空时直接按配置地址连接（补 `ws://` 与 `/ext/bridge`，只有实际建立连接才可能失败，不回落本机发现）。远端地址也可先经面板「系统配置」的 `测试连接` 做一次独立握手验证。
 2. **握手**：`WebSocket` 连接后首帧必须是 `hello{token,caps}`（5s 超时），服务端校验 token → 回 `hello.ok`（协商快照预算）。
 3. **会话**：面板 `session.create` / `session.prompt` → `rpc` 帧 → 桥转发给 Typert Gateway → dsh 执行 → `rpc.result`。
 4. **事件回传**：dsh 的会话事件（`user/message`、`assistant/message`、`turn/end`、`question/requested`）经 `event` 帧流式推给面板渲染。
@@ -58,5 +58,5 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 | **fail-closed 审批** | 读默认 auto；写操作一律审批，无面板即超时拒绝 | 安全边界在扩展后台，不赌模型自觉 |
 | **稳定元素编号** | WeakMap 一次性分配 id + `data-dsh-el` 标记 | 跨快照可寻址，避免重渲染后点错 |
 | **敏感字段永不外泄** | 密码/卡号/CVV 掩码为 `••••`；页面文本包一层不可信标记 | 快照是文本唯一出口，必须在这里挡住 |
-| **共享公共区 + 类型化面板** | UI 组件与工具只在 `common/` 存一份；面板是 8 个模块上方的组装根；`tsc` 门禁三个包 | 不产生 god-module；复用而非重写；类型错误在发布前被拦截 |
+| **共享公共区 + 类型化面板** | UI 组件与工具只在 `common/` 存一份；面板是 10 个模块上方的组装根；`tsc` 门禁三个包 | 不产生 god-module；复用而非重写；类型错误在发布前被拦截 |
 | **MV3 生存性** | 面板 20s 心跳 + 30s alarm 重连 + 断开恢复 | SW 空闲挂起会掐 WebSocket，必须对抗 |

@@ -35,7 +35,7 @@
 | 框选截图 | 用户从面板框选页面区域 → 裁剪截图 + 选区内 DOM 元素清单 → 发给视觉模型 |
 | 模型选择 | 面板连接后重拉 `model.catalog`；下拉框带能力标记（视觉/文本/未知）→ `session.selectModel` |
 
-安全模型：桥自带 bearer token；读默认放行，写操作 fail-closed 需面板审批；密码/卡号掩码、永不离开页面。
+安全模型：桥自带 bearer token；读默认放行，写操作 fail-closed 需面板审批；密码/卡号掩码、永不离开页面。远端连接必须提供 token，且不会放宽以上任何一条。
 
 ## 前置要求
 
@@ -50,8 +50,10 @@
 ### 1. 从 npm 安装桥插件
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@latest"
+dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
 ```
+
+> **请固定版本，不要用 `@latest`。** pnpm 11 起 `minimumReleaseAge` 默认为 `1440` 分钟（1 天）：发布不满一天的版本会被挡下，而 `@latest` 这类 dist-tag **会静默装成上一个版本**（不报错）。`--config.minimumReleaseAge=0` 用于本次安装取消这一等待。桥插件与扩展是版本配对的，请始终安装与你的 `bridge-browser` zip 相匹配的版本。
 
 ### 2. 下载 Chrome 扩展
 
@@ -71,6 +73,12 @@ curl http://127.0.0.1:3080/ext/bridge-config
 ### 4. 加载扩展
 
 解压 `bridge-browser-0.1.0.zip`，然后 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选解压出来的文件夹。打开任意 `http(s)` 页面，点扩展图标打开侧边栏，等「已连接 dsh」，即可对话。
+
+### 5. 远端 dsh（可选）
+
+dsh 跑在另一台机器上时，打开面板状态栏的齿轮按钮「系统配置」，填入地址（`10.0.0.7:3080` 或 `wss://dsh.example.com`）与那台机器上的 token（`cat ~/.dsh/ext-bridge-token`），保存前先点「测试连接」——它会做一次独立握手，并明确告诉你地址不可达还是 token 被拒绝。地址留空则维持零配置的本机自动发现。
+
+被钉在回环上的方法（`settings.*`、`credentials.*`、`host.openPath`、`host.pickDirectory`）在远端连接下始终不可用——这是桥自身的信任边界，不是配置弹窗的缺陷。
 
 ### 从源码构建（可选）
 
@@ -99,7 +107,7 @@ bash scripts/sync-profile.sh            # 拷贝进已安装的插件目录（�
 
 桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@latest"`（其 release 也附了 `bridge-dsh-0.1.0.tgz`）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.1.0.tgz`）
 - `bridge-browser-0.1.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构

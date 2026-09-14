@@ -22,6 +22,6 @@ rm -rf lib
   --bundle --platform=node --format=esm --target=node22 \
   --outfile=lib/index.js \
   --external:@deepseek-ai/* --external:ws \
-  --alias:@dsh-browser/protocol=../protocol/src/protocol.ts \
+  --alias:@dsh-browser/protocol=../protocol/src/index.ts \
   --log-level=info
 echo "bridge built -> lib/index.js"

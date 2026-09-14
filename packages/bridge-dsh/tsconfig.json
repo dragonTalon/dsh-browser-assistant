@@ -4,7 +4,7 @@
   "compilerOptions": {
     "paths": {
       "@deepseek-ai/*": ["/Users/dragon/.dsh/profiles/node_modules/@deepseek-ai/*"],
-      "@dsh-browser/protocol": ["../protocol/src/protocol.ts"]
+      "@dsh-browser/protocol": ["../protocol/src/index.ts"]
     }
   }
 }

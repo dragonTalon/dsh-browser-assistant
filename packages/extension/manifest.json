@@ -48,6 +48,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://127.0.0.1:* http://127.0.0.1:*"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws://*:* wss://*:* http://127.0.0.1:*"
   }
 }
