@@ -25,7 +25,7 @@ import {
   buildBridgeModelCatalog,
   type ModelCatalogServices,
 } from './model-catalog.ts'
-import type { RespondResult } from '@dsh-browser/protocol'
+import type { CommandExecuteRequest, RespondResult } from '@dsh-browser/protocol'
 
 /** Structural subset of dsh 0.1.2's Host TypertGateway service. */
 export interface TypertGatewayLike {
@@ -114,6 +114,15 @@ class RemoteHostApi implements BrowserHostApi {
   private groupedWorkspaceId: string | undefined
   /** In-flight registration so concurrent creates share one `workspace.create`. */
   private groupedWorkspacePending: Promise<string | undefined> | undefined
+  /**
+   * Owns the lifetime of in-flight registration. It deliberately does NOT
+   * borrow the requesting connection's signal: that connection is replaced on
+   * every extension reconnect, and a signal captured into the shared
+   * registration path would kill every later attempt too — silently turning
+   * grouping off for the rest of the process. Only the wait is the caller's;
+   * the registration itself is the bridge's.
+   */
+  private readonly groupedWorkspaceAbort = new AbortController()
 
   constructor(
     private readonly gateway: TypertGatewayLike,
@@ -186,18 +195,35 @@ class RemoteHostApi implements BrowserHostApi {
    * Resolve the Workspace that should own an extension-created Session.
    * Registration is idempotent, so an already-registered directory resolves to
    * its existing identity without writing. Failures are never cached.
-   * @param signal - the caller's RPC signal.
+   *
+   * The caller's signal bounds only how long THIS caller waits. The shared
+   * registration runs on the bridge's own lifetime and keeps its result, so a
+   * reconnect mid-registration cannot disable grouping for later callers.
+   * @param signal - the caller's RPC signal, used for the wait alone.
    * @returns the Workspace id, or undefined when grouping is off or failed.
    */
   private async resolveGroupedWorkspaceId(signal: AbortSignal): Promise<string | undefined> {
     const path = this.sessionGrouping?.workspacePath
     if (path === undefined) return undefined
     if (this.groupedWorkspaceId !== undefined) return this.groupedWorkspaceId
+    // A caller that is already gone cannot use a Session, so do not spend a
+    // registration (and a gateway call) that is bound to be discarded.
+    if (signal.aborted) return undefined
     if (this.groupedWorkspacePending === undefined) {
-      this.groupedWorkspacePending = this.registerGroupedWorkspace(path, signal)
+      this.groupedWorkspacePending = this.registerGroupedWorkspace(path, this.groupedWorkspaceAbort.signal)
         .finally(() => { this.groupedWorkspacePending = undefined })
     }
-    return await this.groupedWorkspacePending
+    const pending = this.groupedWorkspacePending
+    let cancelWait = (): void => {}
+    const aborted = new Promise<undefined>((resolve) => {
+      cancelWait = () => { resolve(undefined) }
+      signal.addEventListener('abort', cancelWait, { once: true })
+    })
+    try {
+      return await Promise.race([pending, aborted])
+    } finally {
+      signal.removeEventListener('abort', cancelWait)
+    }
   }
 
   /**
@@ -822,6 +848,36 @@ function invokeTarget(call: HostRpcCall): InvokeTarget | { readonly error: HostR
         adapt: value => ({ models: value }),
       }
     }
+    case 'commands.list': {
+      const sessionId = requireSessionId(call)
+      if (typeof sessionId !== 'string') return sessionId
+      return { namespace: 'commands', method: 'list', args: { agentId: sessionId } }
+    }
+    case 'skills.list': {
+      // Skills are a namespace parallel to commands, and address the session
+      // through a request envelope rather than a resolvable agent id.
+      const sessionId = requireSessionId(call)
+      if (typeof sessionId !== 'string') return sessionId
+      return { namespace: 'skills', method: 'list', args: { request: { sessionId } } }
+    }
+    case 'commands.execute': {
+      const sessionId = requireSessionId(call)
+      if (typeof sessionId !== 'string') return sessionId
+      // Typed against the shared contract: a rename of `line` on either end
+      // becomes a compile error here rather than a bad-request at runtime.
+      const line = (call.payload as Partial<CommandExecuteRequest>).line
+      if (typeof line !== 'string' || line.trim().length === 0) {
+        return { error: badRequestFailure('commands.execute requires a non-empty line') }
+      }
+      // A panel command never carries attachments, and the host admits an
+      // explicit empty array, so the wire shape stays fixed instead of relying
+      // on the endpoint's optional-parameter default.
+      return {
+        namespace: 'commands',
+        method: 'execute',
+        args: { agentId: sessionId, line, submittedAttachments: [] },
+      }
+    }
     default:
       return {
         error: {
@@ -1033,9 +1089,24 @@ function respondOutcome(result: RespondResult): RemoteEventOutcome {
 
 function sessionIdOf(payload: unknown): string | undefined {
   if (!isRecord(payload)) return undefined
-  return typeof payload.sessionId === 'string' && payload.sessionId.length > 0
-    ? payload.sessionId
-    : undefined
+  if (typeof payload.sessionId !== 'string') return undefined
+  // Trimmed, matching the wire parser's own treatment of `tool.call`: a
+  // whitespace-only id is not an id, and forwarding it would hand the host an
+  // empty lookup key instead of the bad-request it deserves.
+  const sessionId = payload.sessionId.trim()
+  return sessionId.length > 0 ? sessionId : undefined
+}
+
+/**
+ * Extract the session a command RPC addresses, or the failure to return.
+ * `agentId` is resolved to a live Agent by the host's own lookup provider, so a
+ * blank id must fail here rather than reach the gateway as an empty lookup key.
+ * @param call - the decoded command RPC.
+ * @returns the session id, or the wrapped bad-request failure to hand back verbatim.
+ */
+function requireSessionId(call: HostRpcCall): string | { readonly error: HostRpcFailure } {
+  const sessionId = sessionIdOf(call.payload)
+  return sessionId ?? { error: badRequestFailure(`${call.method} requires a non-empty sessionId`) }
 }
 
 /** Read `workspace.workspaceId` out of a `workspace.create` value. */

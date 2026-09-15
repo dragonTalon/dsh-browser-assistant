@@ -53,10 +53,78 @@ const PRIVILEGED_METHODS = new Set([
   'credentials.unset',
 ])
 
+/**
+ * How long one session-ordered RPC may hold its queue slot.
+ *
+ * An ordered call owns the session's slot for its whole duration, and a host
+ * command's reply is produced only after its handler finishes (the command
+ * runtime awaits the handler before settling), so a long command such as
+ * `/compact` would otherwise block every later prompt on that session. The
+ * budget is deliberately far larger than the extension's own 30s RPC budget:
+ * it must not fire for ordinary commands, only for one that has effectively
+ * stopped responding.
+ *
+ * Whether aborting actually stops the host is per-command, verified against
+ * the harness checkout rather than assumed:
+ * - `/compact` DOES stop — its handler forwards the signal to the compaction
+ *   service, which threads it through `AbortSignal.any` and throws on abort,
+ *   after which the handler answers with its own `command/done`. The bridge's
+ *   release and the command's own reported outcome therefore agree.
+ * - `/plan` carries the signal into its approval waterfall.
+ * - `/goal`, `/permission`, `/feedback` and `/export` do not observe it, so
+ *   they run to completion. This is why the deadline's failure wording says the
+ *   call "may still be running" rather than claiming it was cancelled.
+ */
+const ORDERED_RPC_DEADLINE_MS = 120_000
+
+/** Why an ordered call stopped waiting: its own budget, not the connection. */
+class OrderedRpcDeadlineError extends Error {
+  constructor(method: string, ms: number) {
+    super(`gateway rpc ${method} did not answer within ${ms}ms`)
+    this.name = 'OrderedRpcDeadlineError'
+  }
+}
+
+/**
+ * Bound one ordered call's lifetime by its own budget, combined with the
+ * connection that issued it.
+ *
+ * Releasing the queue slot is a hard guarantee: the deadline aborts this call,
+ * `api.call` rejects, and `routeRpc`'s cleanup drops the slot. Stopping the
+ * host is NOT guaranteed — the host adapter receives the abort and the host's
+ * own `withAbort` only unwraps the promise it wraps, so a handler already
+ * running keeps running unless it observes the signal itself. The failure
+ * wording therefore never claims the command was cancelled.
+ *
+ * @param parent - the issuing connection's signal.
+ * @returns the combined signal and an idempotent disposer clearing the timer.
+ */
+function withDeadline(method: string, parent: AbortSignal, ms: number): { signal: AbortSignal; settle: () => void } {
+  const controller = new AbortController()
+  const forward = (): void => controller.abort(parent.reason)
+  parent.addEventListener('abort', forward, { once: true })
+  if (parent.aborted) forward()
+  const timer = setTimeout(() => {
+    controller.abort(new OrderedRpcDeadlineError(method, ms))
+  }, ms)
+  return {
+    signal: controller.signal,
+    settle: () => {
+      clearTimeout(timer)
+      parent.removeEventListener('abort', forward)
+    },
+  }
+}
+
 /** Session mutations whose WebSocket arrival order is behaviorally significant. */
 const ORDERED_SESSION_METHODS = new Set([
   'session.prompt',
   'session.cancel',
+  // A slash command mutates the same session state a prompt does (`/plan off`
+  // changes the mode the next prompt runs under), so a command typed before a
+  // message must reach the host before it. Its payload carries `sessionId`
+  // precisely so this queue can order on it.
+  'commands.execute',
 ])
 
 /** Loopback IPv4/IPv6 literals (IPv4-mapped included). Exported for tests and reuse. */
@@ -95,6 +163,13 @@ export interface BridgeServerDeps {
   helloTimeoutMs?: number
   /** Server ping cadence; defaults to PING_INTERVAL_MS. */
   pingIntervalMs?: number
+  /**
+   * Budget for one session-ordered RPC; defaults to
+   * {@link ORDERED_RPC_DEADLINE_MS}. Not part of the published config — it
+   * exists so the release path is reachable in a bounded-time check instead of
+   * requiring a two-minute wait.
+   */
+  orderedRpcDeadlineMs?: number
 }
 
 /** One in-flight tool call awaiting the extension's `tool.result`. */
@@ -376,6 +451,10 @@ export class BridgeServer {
    * Preserve prompt/cancel arrival order per session. In particular, the
    * first prompt may still be materializing a provisional session; its cancel
    * must not reach the gateway until that admission has completed.
+   *
+   * An ordered call holds this session's slot for its whole duration, so it
+   * also runs under its own deadline (see `ORDERED_RPC_DEADLINE_MS`): a host
+   * call that never settles must not take the session's queue down with it.
    */
   private routeRpc(frame: Extract<ClientFrame, { t: 'rpc' }>): void {
     const sessionId = orderedSessionId(frame)
@@ -383,10 +462,13 @@ export class BridgeServer {
       void this.handleRpc(frame)
       return
     }
+    const parent = this.current?.abort.signal ?? new AbortController().signal
     const previous = this.orderedSessionRpcs.get(sessionId) ?? Promise.resolve()
+    // The budget is armed when the call RUNS, not when it is queued: waiting
+    // behind an earlier call is not this call's time to spend.
     const task = previous.then(
-      () => this.handleRpc(frame),
-      () => this.handleRpc(frame),
+      () => this.runOrdered(frame, parent),
+      () => this.runOrdered(frame, parent),
     )
     this.orderedSessionRpcs.set(sessionId, task)
     const clear = (): void => {
@@ -395,7 +477,37 @@ export class BridgeServer {
     void task.then(clear, clear)
   }
 
-  private async handleRpc(frame: Extract<ClientFrame, { t: 'rpc' }>): Promise<void> {
+  /**
+   * Run one ordered call under its own deadline and always release the timer.
+   * @param frame - the decoded ordered RPC.
+   * @param parent - the issuing connection's signal, snapshotted at route time.
+   */
+  private async runOrdered(frame: Extract<ClientFrame, { t: 'rpc' }>, parent: AbortSignal): Promise<void> {
+    const deadline = withDeadline(
+      frame.method,
+      parent,
+      this.deps.orderedRpcDeadlineMs ?? ORDERED_RPC_DEADLINE_MS,
+    )
+    try {
+      await this.handleRpc(frame, deadline.signal, parent)
+    } finally {
+      deadline.settle()
+    }
+  }
+
+  /**
+   * Dispatch one RPC to the host adapter and answer the caller.
+   * @param frame - the decoded RPC.
+   * @param signal - the call's own signal (an ordered call passes its deadline
+   *   signal); omitted for unordered calls, which follow the connection.
+   * @param parent - the issuing connection's signal, used only to tell a
+   *   deadline abort apart from a connection replacement in the same tick.
+   */
+  private async handleRpc(
+    frame: Extract<ClientFrame, { t: 'rpc' }>,
+    signal?: AbortSignal,
+    parent?: AbortSignal,
+  ): Promise<void> {
     const conn = this.current
     /* v8 ignore next -- replacement race: a frame can land between a socket
     replacement and the next promotion; the re-check keeps the handler total */
@@ -410,7 +522,7 @@ export class BridgeServer {
         rpcId: frame.id,
         method: frame.method,
         payload: frame.payload,
-        signal: conn.abort.signal,
+        signal: signal ?? conn.abort.signal,
       })
       sendFrame(conn.ws, {
         t: 'rpc.result',
@@ -419,6 +531,22 @@ export class BridgeServer {
         result: { type: 'server-response', rpcId: frame.id, result },
       })
     } catch (error: unknown) {
+      // Its own budget expired, not the connection: report it without ever
+      // implying the host stopped — it may still be running the call. A
+      // connection replaced in the same tick aborts first and is NOT a timeout,
+      // so the deadline verdict only stands while the connection is alive.
+      if (error instanceof OrderedRpcDeadlineError && parent?.aborted !== true) {
+        sendFrame(conn.ws, {
+          t: 'rpc.result',
+          id: frame.id,
+          ok: false,
+          error: {
+            code: 'timeout',
+            message: `${error.message}; it may still be running on the host — the event stream owns its outcome`,
+          },
+        })
+        return
+      }
       sendFrame(conn.ws, { t: 'rpc.result', id: frame.id, ok: false, error: { code: 'internal', message: String(error) } })
     }
   }
