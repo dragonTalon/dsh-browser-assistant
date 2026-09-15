@@ -57,3 +57,47 @@
 
 - **WHEN** 扩展对会话 S 发起首次 `session.prompt`，本进程此前未推送过 S 的任何事件
 - **THEN** follow 快照中的既有记录不推送，仅投递订阅建立后的增量事件
+
+### Requirement: 命令生命周期事件的投递与重放
+
+桥接层 SHALL 把 dsh 会话中的命令生命周期事件（命令开始事件与配对的命令结果事件）与其它会话事件同等对待：既 SHALL 在订阅建立后作为 `session/event` 帧实时投递，也 SHALL 被历史重放覆盖，使扩展无论通过实时到达还是通过历史读取都能获得完整的命令生命周期。
+
+命令生命周期事件 MUST NOT 被事件筛选、展开或去重逻辑丢弃：从会话记录展开历史时 MUST 保留这些事件，断连窗口的按序回补 MUST NOT 因事件类型而跳过它们。
+
+#### Scenario: 实时投递命令生命周期
+
+- **WHEN** 连接已订阅会话 S，S 上发生一条命令开始事件与随后的配对结果事件
+- **THEN** 两个事件按其既有事件序列顺序作为 `session/event` 帧投递到该连接，类型分别为命令开始与命令结果，且结果事件携带其成功或失败结论
+
+#### Scenario: 历史读取覆盖命令生命周期
+
+- **WHEN** 会话 S 的日志中已存在命令开始事件与配对结果事件，扩展发起会话历史读取
+- **THEN** 返回的历史记录同时包含这两个事件，且它们的序列未被改写、未被合并进其它事件
+
+#### Scenario: 断连窗口内的命令生命周期被回补
+
+- **WHEN** 会话 S 的命令生命周期事件发生在连接断连期间，桥接层已记录该会话的投递游标，扩展重连后恢复订阅
+- **THEN** 序列号大于投递游标的命令生命周期事件按序补发到新连接，且已被投递过的不重复回补
+
+### Requirement: 按会话保序 RPC 的释放
+
+桥接层对按会话保序的 RPC（`session.prompt`、`session.cancel`、`commands.execute`）SHALL 在调用 settle 后释放该会话的队列槽位。由于宿主命令执行入口的应答在 handler 结束后才产生，且单个命令的耗时不受桥接控制，保序队列 MUST NOT 允许一次调用无限期占用该会话的槽位：桥接层 SHALL 为 ordered RPC 施加有界等待，超时后 MUST 释放该会话的队列槽位，使该会话后续的 RPC 能继续被处理，并 MUST 以 `rpc.result` 失败收尾。
+
+超时回报 MUST NOT 声称该命令已被取消或已中止：桥接层无法保证宿主停止一个已在运行的 handler。失败文案 SHALL 说明该调用未在时限内应答、其结果以事件流为准。
+
+超时释放该槽位后，该会话后续到达的 RPC MUST NOT 继续排在一个已经超时的调用之后。
+
+#### Scenario: 长命令超时后释放队列
+
+- **WHEN** 会话 S 上的一条 `commands.execute` 调用在桥接的有界等待内未 settle（宿主仍在执行该命令）
+- **THEN** 桥接层以 `rpc.result` 失败结束该调用、释放 S 的队列槽位，并对该调用回报「未在时限内应答、结果以事件流为准」而非「已取消」
+
+#### Scenario: 超时后同会话后续 RPC 继续被处理
+
+- **WHEN** 会话 S 的一条 `commands.execute` 已因超出有界等待而被释放，随后扩展对 S 发起 `session.prompt`
+- **THEN** 该 `session.prompt` 被正常处理并向扩展返回结果，MUST NOT 继续等待那条已经超时的调用
+
+#### Scenario: 未超时的调用仍保持到达顺序
+
+- **WHEN** 会话 S 上先后到达一条 `commands.execute` 与一条 `session.prompt`，且前者在有界等待内 settle
+- **THEN** 两条调用按到达顺序被处理，`session.prompt` 在 `commands.execute` settle 之后才被发起
