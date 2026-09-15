@@ -12,6 +12,9 @@
     "check:grouping": "node scripts/check-session-grouping.mjs",
     "check:grouping:e2e": "node scripts/check-session-grouping-e2e.mjs",
     "check:selection": "node scripts/check-session-selection.mjs",
-    "check:selection:e2e": "node scripts/check-session-selection-e2e.mjs"
+    "check:selection:e2e": "node scripts/check-session-selection-e2e.mjs",
+    "check:ordered-rpc": "node scripts/check-ordered-rpc.mjs",
+    "check:grouping-lifecycle": "node scripts/check-grouping-lifecycle.mjs",
+    "check:slash": "node scripts/check-slash-command.mjs"
   }
 }
