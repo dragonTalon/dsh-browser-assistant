@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "build": "bash build.sh"
+    "build": "bash build.sh",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

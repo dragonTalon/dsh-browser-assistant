@@ -38,7 +38,11 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
-  packages/protocol: {}
+  packages/protocol:
+    devDependencies:
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
 
 packages:
 
@@ -303,7 +307,8 @@ snapshots:
     dependencies:
       undici-types: 6.21.0
 
-  '@types/trusted-types@2.0.7': {}
+  '@types/trusted-types@2.0.7':
+    optional: true
 
   '@types/ws@8.18.1':
     dependencies:
