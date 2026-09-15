@@ -19,6 +19,9 @@ import * as question from './question.ts'
 import * as approval from './approval.ts'
 import * as settings from './settings.ts'
 import * as errors from './errors.ts'
+import * as slashCommand from './slash-command.ts'
+import { submittedSlashName } from '../common/slash-catalog.ts'
+import * as slashText from './slash-command-text.ts'
 
 const inputEl = document.getElementById('input') as HTMLTextAreaElement
 const sendBtn = document.getElementById('sendBtn') as HTMLButtonElement
@@ -27,15 +30,68 @@ let lastState: BridgeState = 'stopped'
 
 // ---- send ----
 
+/**
+ * Submit the composer.
+ *
+ * A draft takes the slash route only when its first token names something the
+ * bound session resolves — a host command or a skill. Anything else (a leading
+ * slash naming neither, such as a path) stays ordinary text, matching how dsh's
+ * own web client lets an unmatched line through to the model.
+ *
+ * A resolved line is sent whole, arguments included: the host owns each
+ * command's grammar and is the only authority on whether that line is valid.
+ */
 function send(): void {
   const text = inputEl.value.trim()
-  inputEl.value = ''
-  // A pending region turns the input into the intent for the crop.
+  // A pending region turns the input into the intent for the crop, so it keeps
+  // priority: the slash menu must never swallow that intent.
   if (region.hasPendingRegion()) {
+    inputEl.value = ''
     void region.sendRegion(text)
     return
   }
+  const name = submittedSlashName(text)
+  if (name !== undefined) {
+    submitSlash(text, name)
+    return
+  }
+  inputEl.value = ''
   if (text === '') return
+  void conversation.sendText(text)
+}
+
+/**
+ * Route one slash draft by the namespace that published it.
+ *
+ * Only a name neither namespace resolves falls through to the model. The two
+ * namespaces are invoked differently and that difference is the whole routing
+ * rule: a command has an execute endpoint and opens no turn, while a skill has
+ * none and is invoked precisely by sending `/<name>` as an ordinary prompt for
+ * the host's pre-step boundary to recognize.
+ */
+function submitSlash(text: string, name: string): void {
+  // A failed catalog read is not the same as "unknown command". The entry may
+  // exist and simply could not be listed, so the draft is kept and nothing is
+  // sent rather than guessed at.
+  const failure = slashCommand.takeFailure()
+  if (!slashCommand.catalogReady()) {
+    conversation.appendSystem(slashText.catalogUnavailableNotice(name, failure))
+    return
+  }
+  const entry = slashCommand.resolveSlashEntry(name)
+  if (entry === undefined) {
+    // Neither namespace resolves it: ordinary text, sent as typed.
+    inputEl.value = ''
+    void conversation.sendText(text)
+    return
+  }
+  inputEl.value = ''
+  slashCommand.closeMenu()
+  if (entry.kind === 'command') {
+    void conversation.executeCommand(text)
+    return
+  }
+  // A skill rides the normal send path — that IS its invocation gesture.
   void conversation.sendText(text)
 }
 
@@ -104,6 +160,9 @@ async function openSession(sessionId: string): Promise<void> {
   conversation.bindSession(sessionId)
   modelSelector.resetSelection()
   conversation.beginReplay(sessionId)
+  // `bindSession` already pointed the command menu at this session and dropped
+  // the previous catalog, so only the re-read is left to kick off here.
+  void slashCommand.refreshCatalog()
   try {
     const page = await rpc<{ events?: unknown; hasMore?: unknown }>('session.history', { sessionId })
     // Superseded by a newer switch: that switch already owns the transcript and
@@ -139,6 +198,8 @@ async function openSession(sessionId: string): Promise<void> {
 
 /** Return to "new session": unbind, forget the transcript, reset the model row. */
 function startNewSession(): void {
+  // `bindSession(null)` also clears the command catalog: nothing can be
+  // resolved until a session exists again, and the menu says so when asked.
   conversation.bindSession(null)
   conversation.clear()
   modelSelector.resetSelection()
@@ -173,12 +234,16 @@ function onPortMessage(message: unknown): void {
       lastState = s.state
       modelSelector.setConnected(s.state === 'connected')
       sessionSelector.setConnected(s.state === 'connected')
+      slashCommand.setContext({ connected: s.state === 'connected' })
       if (s.state === 'connected') {
         // Refresh the catalog and the session candidates on (re)connect —
         // adapters and sessions can both change between runs.
         if (!wasConnected) {
           void modelSelector.loadCatalog()
           void sessionSelector.loadSessions()
+          // The host's command registry may have changed between runs, and a
+          // reconnect is when the panel learns about it.
+          void slashCommand.refreshCatalog()
         }
         const active = conversation.getActiveSessionId()
         if (active !== null && !wasConnected) {
@@ -235,6 +300,30 @@ question.initQuestion()
 approval.initApproval()
 region.initRegion()
 modelSelector.initModelSelector()
+// The composer elements are injected rather than looked up inside the menu
+// module, so that module stays loadable — and therefore testable — outside a
+// browser. A selection only writes a line into the composer: it never re-reads
+// the catalog, because picking a row cannot change which session it resolves on.
+slashCommand.initSlashCommand(
+  {
+    menu: document.getElementById('slashMenu')!,
+    input: inputEl,
+  },
+  () => {},
+)
+// One notification for the one place the session identity changes: the menu
+// drops the previous session's catalog and re-reads for the new one. This is
+// also how a session created *by* the menu reaches it. The menu reads the
+// identity back from `conversation` rather than keeping a copy of its own.
+conversation.setSessionBindListener((sessionId) => {
+  slashCommand.invalidate()
+  if (sessionId !== null) void slashCommand.refreshCatalog()
+})
+// A prompt materializes a cold session's Agent, so a catalog that session could
+// not answer before may resolve now. The conversation module only reports the
+// fact; deciding what it invalidates belongs to the composition root, which is
+// what keeps the dependency pointing feature -> core instead of back again.
+conversation.setPromptAcceptedListener(() => { void slashCommand.refreshCatalog() })
 sessionSelector.initSessionSelector((sessionId) => {
   if (sessionId === null) startNewSession()
   else void openSession(sessionId)
@@ -243,6 +332,12 @@ settings.initSettings()
 
 sendBtn.addEventListener('click', () => { void send() })
 inputEl.addEventListener('keydown', (e) => {
+  // The slash menu registers its own keydown listener first and calls
+  // preventDefault when it consumes the key (picking a row, moving the
+  // highlight, dismissing itself). Submitting on that same event would run the
+  // line the pick just wrote — the user would lose the chance to type an
+  // argument, so a consumed key stops here.
+  if (e.defaultPrevented) return
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() }
 })
 

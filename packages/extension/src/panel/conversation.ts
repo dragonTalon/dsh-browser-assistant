@@ -1,16 +1,23 @@
 /**
  * Conversation state + rendering: the user/assistant/system list, the animated
- * "working" indicator, session creation, and text sending.
+ * "working" indicator, session creation, text sending, and the durable
+ * slash-command lifecycle.
  *
  * Renders message/turn events only; `model/selection` events are routed to the
  * model selector by `main.ts`, keeping this module decoupled from model state.
+ * Slash-command rows are built from the command lifecycle events themselves and
+ * never from an RPC acknowledgment, so a live view and a history replay of the
+ * same session render identically.
  *
  * @module
  */
 
+import { BRIDGE_COMMANDS_EXECUTE_METHOD } from '@dsh-browser/protocol'
 import { rpc } from './transport.ts'
 import { describeRpcError } from './errors.ts'
 import { appendLog } from './log.ts'
+import * as slashText from './slash-command-text.ts'
+import { el, errorCode } from '../common/index.ts'
 import {
   bufferEvent,
   conversationRow,
@@ -23,6 +30,8 @@ import {
 
 const logEl = document.getElementById('log')!
 
+/** Error code the transport attaches when a call exceeded its own budget. */
+const RPC_TIMEOUT = 'rpc-timeout'
 /**
  * Active session identity — the panel's two-state session machine.
  *
@@ -35,18 +44,25 @@ let activeSessionId: string | null = null
 let sessionPromise: Promise<boolean> | null = null
 /** Notified on every identity change so the picker can follow it. */
 let sessionListener: ((sessionId: string | null) => void) | null = null
+/** Notified after the host admits a prompt; consumed by the composition root. */
+let promptAcceptedListener: (() => void) | null = null
 let interrupted = false
 let assistantRow: HTMLElement | null = null
 let assistantBuffer = ''
 let working: WorkingRow | null = null
 
 /** Append a row, keeping the working indicator pinned to the tail. */
-function appendRow(kind: 'user' | 'assistant' | 'system', text: string): HTMLElement {
+function appendRow(kind: 'user' | 'assistant' | 'system' | 'command', text: string): HTMLElement {
   const row = conversationRow(kind, text)
+  appendRowEl(row)
+  return row
+}
+
+/** Append a prepared row element, keeping the working indicator pinned last. */
+function appendRowEl(row: HTMLElement): void {
   logEl.appendChild(row)
   if (working !== null) logEl.appendChild(working.el)
   logEl.scrollTop = logEl.scrollHeight
-  return row
 }
 
 /** Append a centered system notice. */
@@ -127,7 +143,89 @@ export function handleMessageEvent(event: unknown): void {
       assistantRow = null
       assistantBuffer = ''
       break
+    case 'command/run':
+      renderCommandStart(ev.data)
+      break
+    case 'command/done':
+      renderCommandResult(ev.data)
+      break
   }
+}
+
+// ---- slash-command lifecycle rows ----
+//
+// A command's lifecycle is two paired durable events. Rendering only from them
+// (never from the execute RPC's acknowledgment) is what makes a live view and a
+// history replay agree: both paths replay the same log through this one code
+// path, and the replay's own sequence dedup keeps each event from arriving
+// twice. No cross-frame state is kept — the row is found again by the command
+// id the events themselves carry, so an event pair split by a truncated history
+// still settles on the same row.
+
+/** Read a non-empty string field off a command event payload. */
+function commandField(data: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = data?.[key]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+/** Find the row a command id already owns, if any. */
+function commandRowOf(commandId: string): HTMLElement | null {
+  for (const node of logEl.querySelectorAll<HTMLElement>('.row.command')) {
+    if (node.dataset.commandId === commandId) return node
+  }
+  return null
+}
+
+/** Build one command row: the invoked line plus its pending/settled outcome. */
+function buildCommandRow(commandId: string, line: string): HTMLElement {
+  return el('div', {
+    class: 'row command pending',
+    attrs: { 'data-command-id': commandId },
+    // Text nodes only: command names, arguments and result text are host data
+    // and must never be interpreted as markup.
+    children: [
+      el('span', { class: 'cmdLine', text: line }),
+      el('span', { class: 'cmdResult' }),
+    ],
+  })
+}
+
+/** Placeholder shown while a command's paired result event has not arrived. */
+const COMMAND_PENDING = slashText.commandPending()
+
+/** Open a command row when its start event arrives. */
+function renderCommandStart(data: Record<string, unknown> | undefined): void {
+  const commandId = commandField(data, 'commandId')
+  const name = commandField(data, 'name')
+  if (commandId === undefined || name === undefined) return
+  if (commandRowOf(commandId) !== null) return
+  const args = commandField(data, 'args')
+  const row = buildCommandRow(commandId, args === undefined ? `/${name}` : `/${name}${args}`)
+  const result = row.querySelector('.cmdResult')
+  if (result !== null) result.textContent = COMMAND_PENDING
+  appendRowEl(row)
+}
+
+/**
+ * Settle a command row from its result event. An unpaired result (history
+ * truncated before the start event) still renders: dropping it would silently
+ * lose a command the session actually ran.
+ */
+function renderCommandResult(data: Record<string, unknown> | undefined): void {
+  const commandId = commandField(data, 'commandId')
+  const kind = commandField(data, 'kind')
+  if (commandId === undefined || kind === undefined) return
+  const existing = commandRowOf(commandId)
+  const row = existing ?? buildCommandRow(commandId, '/?')
+  if (existing === null) appendRowEl(row)
+  row.classList.remove('pending')
+  row.classList.add(kind === 'success' ? 'ok' : 'failed')
+  const result = row.querySelector('.cmdResult')
+  if (result !== null) {
+    const text = commandField(data, 'text')
+    result.textContent = `${kind === 'success' ? '✓' : '✕'}${text === undefined ? '' : ` ${text}`}`
+  }
+  logEl.scrollTop = logEl.scrollHeight
 }
 
 function appendAssistantChunk(text: string): void {
@@ -152,15 +250,28 @@ export function setSessionListener(listener: (sessionId: string | null) => void)
   sessionListener = listener
 }
 
+/** Notified when the bound session changes, so the command menu can follow it. */
+let sessionBindListener: ((sessionId: string | null) => void) | null = null
+
+/** Register the bound-session observer (set once by `main.ts`). */
+export function setSessionBindListener(listener: (sessionId: string | null) => void): void {
+  sessionBindListener = listener
+}
+
 /**
  * Bind the active session, or clear it with `null` to return to "new session".
- * Idempotent; the observer fires only on an actual change.
+ * Idempotent; observers fire only on an actual change.
+ *
+ * This is the single place the panel's session identity changes, so the slash
+ * menu follows it from here instead of from each call site: a new binding is
+ * exactly what makes a *different* command catalog resolvable.
  */
 export function bindSession(sessionId: string | null): void {
   const next = typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
   if (next === activeSessionId) return
   activeSessionId = next
   sessionListener?.(next)
+  sessionBindListener?.(next)
 }
 
 /**
@@ -201,9 +312,51 @@ export async function sendText(text: string): Promise<void> {
   setWorking(true)
   try {
     await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
+    // A first prompt on a cold session is what materializes its Agent, so a
+    // catalog the cold session could not answer may resolve now. Emitted as a
+    // neutral signal: this module must not depend on the slash-command feature.
+    promptAcceptedListener?.()
   } catch (e) {
     setWorking(false)
     appendSystem(`发送失败: ${describeRpcError(e)}`)
+  }
+}
+
+/**
+ * Register the observer for "the host admitted a prompt". Set once by the
+ * composition root, which decides what a newly materialized Agent invalidates.
+ * @param listener - called after a prompt is accepted (not after a failure).
+ */
+export function setPromptAcceptedListener(listener: () => void): void {
+  promptAcceptedListener = listener
+}
+
+/**
+ * Execute one slash-command line on the bound session.
+ *
+ * Deliberately separate from {@link sendText}: a command is not a prompt. It
+ * opens no turn and writes no user message, so the turn-driven "working"
+ * indicator must not be raised here — nothing would ever lower it. The command's
+ * real outcome arrives as its own lifecycle events and renders from those.
+ *
+ * @param line - the complete command line, leading slash included.
+ */
+export async function executeCommand(line: string): Promise<void> {
+  const sessionId = activeSessionId
+  if (sessionId === null) return
+  try {
+    await rpc(BRIDGE_COMMANDS_EXECUTE_METHOD, { sessionId, line })
+  } catch (error: unknown) {
+    // The durable lifecycle is the authoritative outcome, so a transport-level
+    // failure is diagnostics, not a verdict: the host may still be running the
+    // command and its events will arrive regardless.
+    if (errorCode(error) === RPC_TIMEOUT) {
+      appendLog({ time: Date.now(), level: 'warn', msg: slashText.commandTimeoutLog(line) })
+      return
+    }
+    // A rejected admission never reached a handler, so no lifecycle event will
+    // arrive to explain it: say so rather than leaving the input unaccounted for.
+    appendSystem(slashText.commandRejectedNotice(describeRpcError(error)))
   }
 }
 

@@ -108,6 +108,18 @@
       .row.assistant pre { background: rgba(255,255,255,.06); }
     }
     .row.system { align-self: center; color: #888; font-size: 11px; background: none; padding: 2px 8px; }
+    /* 斜杠命令行：命令名 + 原生参数用等宽字体，下方是待定/成功/失败结论 */
+    .row.command { align-self: flex-start; background: rgba(128,128,128,.08); border: 1px dashed rgba(128,128,128,.4); display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+    .row.command .cmdLine { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+    .row.command .cmdResult { font-size: 11px; color: #8a8a8a; white-space: pre-wrap; word-break: break-word; }
+    .row.command.ok { border-style: solid; border-color: rgba(46,204,113,.5); }
+    .row.command.ok .cmdResult { color: #0b7a3e; }
+    .row.command.failed { border-style: solid; border-color: rgba(231,76,60,.5); }
+    .row.command.failed .cmdResult { color: #c0392b; }
+    @media (prefers-color-scheme: dark) {
+      .row.command.ok .cmdResult { color: #7ce0a6; }
+      .row.command.failed .cmdResult { color: #ff8b7d; }
+    }
     .row.working { display: flex; align-items: center; gap: 8px; color: #2e86de; font-weight: 600; font-size: 12px; }
     .spinner { width: 14px; height: 14px; border: 2px solid rgba(46,134,222,.25); border-top-color: #2e86de; border-radius: 50%; animation: dsh-spin 0.8s linear infinite; flex: none; }
     @keyframes dsh-spin { to { transform: rotate(360deg); } }
@@ -142,6 +154,23 @@
     #composer { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px 10px; border-top: 1px solid rgba(128,128,128,.2); flex: none; }
     #composerBar { display: flex; gap: 8px; align-items: center; }
     #composerRow { display: flex; gap: 8px; align-items: flex-end; }
+
+    /* ---- 斜杠命令菜单（输入区上方的浮层，窄侧栏内自行滚动） ---- */
+    #slashMenu {
+      display: none; flex-direction: column; gap: 1px;
+      max-height: 40vh; overflow-y: auto; overscroll-behavior: contain;
+      border: 1px solid rgba(128,128,128,.35); border-radius: 8px;
+      background: rgba(128,128,128,.06); padding: 4px;
+    }
+    #slashMenu.open { display: flex; }
+    .slashItem { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 6px; cursor: pointer; }
+    .slashItem.active { background: rgba(46,134,222,.16); }
+    /* 说明性占位行：解释菜单为何没有条目，不参与选中 */
+    .slashItem.slashHint { cursor: default; opacity: .75; }
+    .slashItem.slashHint .slashName { font-weight: 400; font-family: inherit; }
+    .slashName { font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 600; }
+    .slashDesc { font-size: 11px; color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; }
+    @media (prefers-color-scheme: dark) { .slashItem.active { background: rgba(46,134,222,.28); } }
     #composer textarea { flex: 1; resize: none; min-height: 40px; max-height: 30vh; padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; font: inherit; color: inherit; }
     button { padding: 6px 14px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
     button:hover { border-color: rgba(128,128,128,.7); }
@@ -278,6 +307,8 @@
         <span id="modelCap" class="capBadge none"></span>
       </div>
     </div>
+    <!-- aria-label 由 panel 模块按 UI 语言设置，静态 HTML 只给角色 -->
+    <div id="slashMenu" role="listbox"></div>
     <div id="composerRow">
       <textarea id="input" placeholder="输入任务，例如：读取当前页面并总结"></textarea>
       <button class="primary" id="sendBtn">发送</button>

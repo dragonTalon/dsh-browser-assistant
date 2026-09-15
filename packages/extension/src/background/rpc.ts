@@ -7,8 +7,17 @@
 
 import type { BridgeClient } from './bridge.ts'
 import type { ServerFrame } from '@dsh-browser/protocol'
+import { withCode } from '../common/index.ts'
 
 const RPC_TIMEOUT_MS = 30_000
+
+/**
+ * Stable code for a call that outlived this client's own budget. The gateway
+ * reply may still arrive afterwards: for a long-running call (a slash command
+ * that summarizes a conversation) the reply is not the outcome, so callers need
+ * to tell "no answer in time" apart from "the call failed".
+ */
+const RPC_TIMEOUT_CODE = 'rpc-timeout'
 
 interface PendingRpc {
   resolve(result: unknown): void
@@ -46,7 +55,10 @@ export function createRpc(bridge: BridgeClient): { request(method: string, paylo
       return new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
           pending.delete(id)
-          reject(new Error(`gateway rpc ${method} timed out after ${RPC_TIMEOUT_MS}ms`))
+          reject(withCode(
+            new Error(`gateway rpc ${method} timed out after ${RPC_TIMEOUT_MS}ms`),
+            RPC_TIMEOUT_CODE,
+          ))
         }, RPC_TIMEOUT_MS)
         pending.set(id, { resolve, reject, timer })
         const sent = bridge.send({ t: 'rpc', id, method, payload })

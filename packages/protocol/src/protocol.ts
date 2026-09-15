@@ -24,6 +24,109 @@ export const BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD = 'bridge.injectBrowserSnapsh
 /** Internal RPC used by the panel to permanently delete one session's durable storage. */
 export const BRIDGE_SESSION_PURGE_METHOD = 'bridge.session.purge'
 
+/** RPC listing the human slash commands one session resolves. Payload: `{ sessionId }`. */
+export const BRIDGE_COMMANDS_LIST_METHOD = 'commands.list'
+
+/**
+ * RPC executing one slash-command line against a session. Payload carries
+ * `sessionId` alongside the host-facing `line` because the bridge serializes
+ * session mutations by that field.
+ */
+export const BRIDGE_COMMANDS_EXECUTE_METHOD = 'commands.execute'
+
+/**
+ * RPC listing the user-invocable skills one session resolves. Payload:
+ * `{ sessionId }`. Skills are a namespace parallel to commands: they have no
+ * execute endpoint, and are invoked by sending `/<name>` as an ordinary prompt
+ * so the host's pre-step boundary injects the skill body.
+ */
+export const BRIDGE_SKILLS_LIST_METHOD = 'skills.list'
+
+/*
+ * Wire contracts for the slash-command RPCs above.
+ *
+ * These are the shapes that actually cross the boundary, stated once so both
+ * ends type against the same thing. They are types only — no runtime cost, and
+ * no frame changes — which is what keeps a host-side field rename a compile
+ * error here instead of a silently missing column in the panel.
+ *
+ * The host's own descriptors are the source of truth; the field names below
+ * mirror them exactly (`CommandDescriptor`, `SkillListValue`, `CommandResult`
+ * in the harness checkout). A panel parsing a host payload stays defensive —
+ * these types describe what a well-formed payload looks like, not a promise
+ * that one will arrive.
+ */
+
+/** Request body of {@link BRIDGE_COMMANDS_LIST_METHOD}. */
+export interface CommandsListRequest {
+  /** Session whose Agent resolves the command view. */
+  readonly sessionId: string
+}
+
+/** Optional free-form argument hint a command advertises. */
+export interface CommandInputDescriptorWire {
+  /** Hint text; present only when the host published one. */
+  readonly hint?: string
+}
+
+/**
+ * One command descriptor as the host publishes it. Only `name` and
+ * `description` are required; a panel must still surface a descriptor whose
+ * optional fields are absent rather than dropping it.
+ */
+export interface CommandDescriptorWire {
+  /** Lowercase command name without the leading slash. */
+  readonly name: string
+  /** Human-readable summary shown verbatim. */
+  readonly description: string
+  /** Optional input hint; absent when the host published none. */
+  readonly input?: CommandInputDescriptorWire
+}
+
+/** Request body of {@link BRIDGE_SKILLS_LIST_METHOD}. */
+export interface SkillsListRequest {
+  /** Session whose composition selects the skill view. */
+  readonly sessionId: string
+}
+
+/** One user-invocable skill as the host publishes it. */
+export interface SkillSummaryWire {
+  /** Skill name without the leading slash. */
+  readonly name: string
+  /** Human-readable summary shown verbatim. */
+  readonly description: string
+  /** Usage guidance; absent when the host published none. */
+  readonly whenToUse?: string
+  /** False when only a human may invoke it. */
+  readonly modelInvocable: boolean
+}
+
+/** Envelope returned by {@link BRIDGE_SKILLS_LIST_METHOD}. */
+export interface SkillsListValueWire {
+  readonly skills: readonly SkillSummaryWire[]
+}
+
+/**
+ * Request body of {@link BRIDGE_COMMANDS_EXECUTE_METHOD}. `line` is the whole
+ * command line, arguments included: the host owns each command's grammar.
+ * `sessionId` is carried for the bridge's per-session ordering, not by the host.
+ */
+export interface CommandExecuteRequest {
+  readonly sessionId: string
+  /** Complete command line, leading slash included. */
+  readonly line: string
+}
+
+/** Outcome of one executed command line. */
+export interface CommandExecuteResult {
+  /** Pairing id carried by this execution's lifecycle events. */
+  readonly commandId: string
+  /** The handler's verbatim outcome. */
+  readonly result:
+    | { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }
+    | { readonly kind: 'error'; readonly text: string }
+}
+
 /** Seconds a fresh socket may take to present `hello` before it is closed. */
 export const HELLO_TIMEOUT_MS = 5_000
 

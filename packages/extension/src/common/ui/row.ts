@@ -1,9 +1,13 @@
 /**
  * List-row components for the panel: conversation rows (user/assistant/system),
- * the animated "working" indicator, and diagnostics log lines.
+ * slash-command lifecycle rows, the animated "working" indicator, and
+ * diagnostics log lines.
  *
  * The Markdown-vs-plain-text policy is centralized here: assistant rows render
  * sanitized Markdown, every other kind uses `textContent` (never parsed as HTML).
+ * A `command` row is text-only for the same reason: its line and result text
+ * come from the host's command registry, which the panel renders but never
+ * trusts as markup.
  *
  * @module
  */
@@ -12,7 +16,7 @@ import { el } from './el.ts'
 import { renderMarkdown } from '../tools/markdown.ts'
 import { fmtTime } from '../tools/format.ts'
 
-export type RowKind = 'user' | 'assistant' | 'system'
+export type RowKind = 'user' | 'assistant' | 'system' | 'command'
 
 /** Build one conversation row, applying the correct rendering policy per kind. */
 export function conversationRow(kind: RowKind, text: string): HTMLElement {
