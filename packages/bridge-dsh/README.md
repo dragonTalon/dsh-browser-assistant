@@ -5,7 +5,7 @@ dsh 浏览器桥插件：token 鉴权的 WebSocket 桥 + 12 个 `browser_*` 工�
 ## Install
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
+dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0
 ```
 
 > **请固定版本，不要用 `@latest`。** pnpm 11 起 `minimumReleaseAge` 默认为 `1440` 分钟（1 天）：发布不满一天的版本会被挡下，而 `@latest` 这类 dist-tag **会静默装成上一个版本**（不报错）。`--config.minimumReleaseAge=0` 用于本次安装取消这一等待。本插件与 Chrome 扩展 `bridge-browser` 是版本配对的，请安装与之匹配的版本。

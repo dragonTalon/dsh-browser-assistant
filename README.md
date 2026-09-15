@@ -10,15 +10,15 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/bridge-dsh"><img src="https://img.shields.io/npm/v/bridge-dsh?label=bridge-dsh" alt="npm version"></a>
-  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.1.0"><img src="https://img.shields.io/badge/bridge--browser-0.1.0-5b21b6" alt="extension version"></a>
+  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.2.0"><img src="https://img.shields.io/badge/bridge--browser-0.2.0-5b21b6" alt="extension version"></a>
 </p>
 
 Let [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh) read and operate the browser tab you already have open — pages become text-only structured snapshots, the model addresses elements by number, and your login state, session, and cookies stay intact.
 
 One pnpm workspace, two halves joined by one WebSocket:
 
-- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.1.0`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
-- **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.1.0`** (service worker + content script + side panel).
+- **`packages/bridge-dsh`** — the dsh Cordis plugin, released as **`bridge-dsh` `0.2.0`**, that mounts `/ext/bridge` and registers 12 `browser_*` tools.
+- **`packages/extension`** — the Chrome MV3 extension, released as **`bridge-browser` `0.2.0`** (service worker + content script + side panel).
 
 > The model tool pipeline is **text-only** — pages become structured text snapshots, tools never capture screenshots. Separately, a **user-initiated** drag-select in the panel can send a cropped region screenshot to a **vision-capable** model. See [docs/en/architecture.md](docs/en/architecture.md) for the full design.
 
@@ -34,7 +34,9 @@ One pnpm workspace, two halves joined by one WebSocket:
 | Page awareness | extension tracks the active tab and injects its URL/title into each prompt as context |
 | Region capture | user drag-selects a page region → cropped screenshot + DOM element list → sent to a vision-capable model |
 | Model selection | panel re-pulls `model.catalog` on connect; dropdown with capability badge (vision / text / unknown) → `session.selectModel` |
-| Session picker | dropdown over `session.list` (new session by default, created lazily on first send); picking a past session binds it and replays its history — no orphans, no `session.create` |
+| Session picker | dropdown over `session.list`, "new session" by default; a session is created on the first send, on the first model pick, or when the `/` menu is opened from "new session". Picking a past session binds it and replays its history — no orphans, no `session.create` |
+| Slash commands & skills | `/` opens a filtered, keyboard-navigable menu over the bound session's **host commands** and **user-invocable skills**: a command runs through `commands.execute` (whole line, arguments included), a skill is sent as an ordinary prompt, and the `command/run`/`command/done` pair renders its lifecycle in the conversation |
+| Session grouping | with `sessionWorkspace` configured, extension-created sessions join that dsh Workspace — grouped under the directory in the dsh sidebar instead of piling up in "Ungrouped" |
 
 Security model: the bridge carries its own bearer token; reads are auto-allowed, state-changing actions fail closed behind a side-panel approval; passwords/card numbers are masked and never leave the page. A remote connection requires the token and relaxes none of the above.
 
@@ -51,7 +53,7 @@ The bridge plugin is published to [npm](https://www.npmjs.com/package/bridge-dsh
 ### 1. Install the bridge plugin (from npm)
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
+dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0
 ```
 
 > **Pin the version — do not use `@latest`.** Since pnpm 11, `minimumReleaseAge` defaults to `1440` minutes (1 day): a version published less than a day ago is held back, and a dist-tag like `@latest` **silently resolves to the previous version** instead of failing. `--config.minimumReleaseAge=0` lifts that wait for this one install. The bridge plugin and the extension are a versioned pair, so always install the version that matches your `bridge-browser` zip.
@@ -59,8 +61,8 @@ dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
 ### 2. Download the Chrome extension
 
 ```sh
-gh release download bridge-browser@0.1.0 --repo dragonTalon/dsh-browser-assistant
-# → bridge-browser-0.1.0.zip
+gh release download bridge-browser@0.2.0 --repo dragonTalon/dsh-browser-assistant
+# → bridge-browser-0.2.0.zip
 ```
 
 ### 3. Restart dsh and verify
@@ -73,7 +75,7 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. Load the extension
 
-Unzip `bridge-browser-0.1.0.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
+Unzip `bridge-browser-0.2.0.zip`, then `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select the unzipped folder. Open any `http(s)` page, click the extension icon to open the side panel, wait for **已连接 dsh**, and chat.
 
 ### 5. Remote dsh (optional)
 
@@ -103,11 +105,17 @@ bash scripts/sync-profile.sh            # copy into the installed plugin dir (au
 
 ```sh
 pnpm typecheck                  # tsc --noEmit across all three packages
-pnpm check:grouping             # 16 offline assertions for the sessionWorkspace contract (no dsh needed)
+pnpm check:slash                # 28 offline assertions for the slash vocabulary + catalog lifecycle
+pnpm check:ordered-rpc          # 7 assertions driving a real BridgeServer over a real WebSocket:
+                                #   the ordered-RPC bound releases the queue slot instead of hanging the session
+pnpm check:grouping-lifecycle   # 6 assertions: workspace registration survives a connection replacement
+pnpm check:selection            # 32 offline assertions for the session picker (buffers, seq, history replay)
+pnpm check:grouping             # 16 offline assertions for the sessionWorkspace contract
+pnpm check:selection:e2e        # live end-to-end: session selection against a running dsh
 pnpm check:grouping:e2e         # live end-to-end: session.create over the real bridge, asserted from the Workspace registry
 ```
 
-`check:grouping:e2e` needs a running dsh with `sessionWorkspace` configured. It briefly supersedes the Chrome panel's bridge connection (the bridge serves one at a time; the extension reconnects on its own) and creates a real Session on every run.
+The five offline checks need no dsh, no Chrome and no network — they bundle the real sources with esbuild and assert the spec scenarios in Node. The two `:e2e` checks need a running dsh (`check:grouping:e2e` additionally needs `sessionWorkspace` configured); they briefly supersede the Chrome panel's bridge connection (the bridge serves one at a time; the extension reconnects on its own) and create a real Session on every run.
 
 ## Releases
 
@@ -115,13 +123,13 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `bridge-dsh` | `0.1.0` | `bridge-dsh@0.1.0` |
-| Chrome extension | `bridge-browser` | `0.1.0` | `bridge-browser@0.1.0` |
+| dsh bridge plugin | `bridge-dsh` | `0.2.0` | `bridge-dsh@0.2.0` |
+| Chrome extension | `bridge-browser` | `0.2.0` | `bridge-browser@0.2.0` |
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.1.0.tgz` is also attached to its release)
-- `bridge-browser-0.1.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.2.0.tgz` is also attached to its release)
+- `bridge-browser-0.2.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 ## Repository layout
 
@@ -137,5 +145,6 @@ docs/en/ docs/zh/       architecture & feature docs (EN / 中文)
 Documentation is bilingual — every page has an **EN | 中文** switcher:
 
 - [Architecture](docs/en/architecture.md) · [中文](docs/zh/architecture.md)
+- [Wire protocol](docs/en/protocol.md) · [中文](docs/zh/protocol.md)
 - [Bridge plugin](docs/en/bridge-plugin.md) · [中文](docs/zh/bridge-plugin.md)
 - [Chrome extension](docs/en/extension.md) · [中文](docs/zh/extension.md)

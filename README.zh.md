@@ -10,15 +10,15 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/bridge-dsh"><img src="https://img.shields.io/npm/v/bridge-dsh?label=bridge-dsh" alt="npm version"></a>
-  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.1.0"><img src="https://img.shields.io/badge/bridge--browser-0.1.0-5b21b6" alt="extension version"></a>
+  <a href="https://github.com/dragonTalon/dsh-browser-assistant/releases/tag/bridge-browser%400.2.0"><img src="https://img.shields.io/badge/bridge--browser-0.2.0-5b21b6" alt="extension version"></a>
 </p>
 
 让 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（dsh）读取、操作你正在使用的真实浏览器标签页：页面变成**纯文本结构化快照**，模型按编号寻址元素，登录态、会话、Cookie 全保留。
 
 一个 pnpm workspace，两半由一条 WebSocket 连接：
 
-- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`bridge-dsh` `0.1.0`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
-- **`packages/extension`** —— Chrome MV3 扩展，发布为 **`bridge-browser` `0.1.0`**（service worker + content script + side panel）。
+- **`packages/bridge-dsh`** —— dsh Cordis 插件，发布为 **`bridge-dsh` `0.2.0`**，挂载 `/ext/bridge`，注册 12 个 `browser_*` 工具。
+- **`packages/extension`** —— Chrome MV3 扩展，发布为 **`bridge-browser` `0.2.0`**（service worker + content script + side panel）。
 
 > 模型工具链路**纯文本**——页面渲染为结构化文本快照，工具侧不截图。另外，面板提供**用户主动**框选，可把选区截图（裁剪）发给**视觉模型**。完整设计见 [docs/zh/architecture.md](docs/zh/architecture.md)。
 
@@ -34,7 +34,9 @@
 | 页面感知 | 扩展追踪活动标签页，把 URL/标题注入每条消息作为上下文 |
 | 框选截图 | 用户从面板框选页面区域 → 裁剪截图 + 选区内 DOM 元素清单 → 发给视觉模型 |
 | 模型选择 | 面板连接后重拉 `model.catalog`；下拉框带能力标记（视觉/文本/未知）→ `session.selectModel` |
-| 会话选择 | 下拉列出 `session.list` 的历史会话（默认「新会话」，首次发送才创建）；选中即绑定并重放其历史——不再产生孤儿会话，也不走 `session.create` |
+| 会话选择 | 下拉列出 `session.list`，默认「新会话」；会话在首次发送、首次为本会话选模型、或在「新会话」下唤出 `/` 菜单时创建。选中历史会话即绑定并重放其历史——不再产生孤儿会话，也不走 `session.create` |
+| 斜杠命令与技能 | 输入 `/` 弹出可过滤、可键盘操作的菜单，列出所绑定会话的**宿主命令**与**用户可调用技能**：命令走 `commands.execute`（整行透传，含参数），技能作为普通消息发送；命令的 `command/run`/`command/done` 生命周期呈现在对话里 |
+| 会话分组 | 配置 `sessionWorkspace` 后，扩展创建的会话自动归入该 dsh 工作区——在 dsh 侧边栏按目录分组，而不是堆在「未分组」桶里 |
 
 安全模型：桥自带 bearer token；读默认放行，写操作 fail-closed 需面板审批；密码/卡号掩码、永不离开页面。远端连接必须提供 token，且不会放宽以上任何一条。
 
@@ -51,7 +53,7 @@
 ### 1. 从 npm 安装桥插件
 
 ```sh
-dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
+dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0
 ```
 
 > **请固定版本，不要用 `@latest`。** pnpm 11 起 `minimumReleaseAge` 默认为 `1440` 分钟（1 天）：发布不满一天的版本会被挡下，而 `@latest` 这类 dist-tag **会静默装成上一个版本**（不报错）。`--config.minimumReleaseAge=0` 用于本次安装取消这一等待。桥插件与扩展是版本配对的，请始终安装与你的 `bridge-browser` zip 相匹配的版本。
@@ -59,8 +61,8 @@ dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0
 ### 2. 下载 Chrome 扩展
 
 ```sh
-gh release download bridge-browser@0.1.0 --repo dragonTalon/dsh-browser-assistant
-# → bridge-browser-0.1.0.zip
+gh release download bridge-browser@0.2.0 --repo dragonTalon/dsh-browser-assistant
+# → bridge-browser-0.2.0.zip
 ```
 
 ### 3. 重启 dsh 并验证
@@ -73,7 +75,7 @@ curl http://127.0.0.1:3080/ext/bridge-config
 
 ### 4. 加载扩展
 
-解压 `bridge-browser-0.1.0.zip`，然后 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选解压出来的文件夹。打开任意 `http(s)` 页面，点扩展图标打开侧边栏，等「已连接 dsh」，即可对话。
+解压 `bridge-browser-0.2.0.zip`，然后 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选解压出来的文件夹。打开任意 `http(s)` 页面，点扩展图标打开侧边栏，等「已连接 dsh」，即可对话。
 
 ### 5. 远端 dsh（可选）
 
@@ -97,19 +99,37 @@ bash scripts/sync-profile.sh            # 拷贝进已安装的插件目录（�
 # 然后重启 dsh（或重载该插件）让新 bundle 生效
 ```
 
+> 上述拷贝替换的是 profile 里的**文件**，而正在运行的 dsh 仍持有它已经 import 的模块。热重载补丁只会用新配置重跑插件的 `apply()`，用的仍是**旧模块**，所以改了源码必须重启 dsh。
+
+### 校验脚本
+
+```sh
+pnpm typecheck                  # 三个包的 tsc --noEmit
+pnpm check:slash                # 28 项离线断言：斜杠词汇 + 目录生命周期
+pnpm check:ordered-rpc          # 7 项断言：以真实 WebSocket 驱动真实 BridgeServer,
+                                #   验证保序 RPC 的有界等待释放队列槽位而非挂死会话
+pnpm check:grouping-lifecycle   # 6 项断言：连接替换后工作区分组仍能注册
+pnpm check:selection            # 32 项离线断言：会话选择（缓冲、seq、历史重放）
+pnpm check:grouping             # 16 项离线断言：sessionWorkspace 契约
+pnpm check:selection:e2e        # 实机端到端：对运行中的 dsh 验证会话选择
+pnpm check:grouping:e2e         # 实机端到端：经真实桥发起 session.create,并从 Workspace 注册表断言
+```
+
+五个离线脚本不需要 dsh、不需要 Chrome、不需要网络——它们用 esbuild 打包**真实源码**后在 Node 里断言 spec 场景。两个 `:e2e` 脚本需要运行中的 dsh（`check:grouping:e2e` 还需配置 `sessionWorkspace`）；它们会短暂顶替 Chrome 面板的桥连接（桥同一时刻只服务一个，扩展会自行重连），且每次运行都会创建一个真实会话。
+
 ## 发布版本
 
 两半独立发布：
 
 | 产物 | 包名 | 版本 | Git tag |
 |---|---|---|---|
-| dsh bridge 插件 | `bridge-dsh` | `0.1.0` | `bridge-dsh@0.1.0` |
-| Chrome 扩展 | `bridge-browser` | `0.1.0` | `bridge-browser@0.1.0` |
+| dsh bridge 插件 | `bridge-dsh` | `0.2.0` | `bridge-dsh@0.2.0` |
+| Chrome 扩展 | `bridge-browser` | `0.2.0` | `bridge-browser@0.2.0` |
 
 桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.1.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.1.0.tgz`）
-- `bridge-browser-0.1.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.2.0.tgz`）
+- `bridge-browser-0.2.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 ## 目录结构
 
@@ -125,5 +145,6 @@ docs/en/ docs/zh/       架构与功能文档（EN / 中文）
 文档为中英双语，每页都有 **EN | 中文** 切换：
 
 - [整体架构](docs/zh/architecture.md) · [English](docs/en/architecture.md)
+- [线协议](docs/zh/protocol.md) · [English](docs/en/protocol.md)
 - [bridge 插件](docs/zh/bridge-plugin.md) · [English](docs/en/bridge-plugin.md)
 - [Chrome 扩展](docs/zh/extension.md) · [English](docs/en/extension.md)
