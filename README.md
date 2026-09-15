@@ -131,6 +131,8 @@ The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge
 - `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.2.0.tgz` is also attached to its release)
 - `bridge-browser-0.2.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
+Every release description is bilingual and is generated from that package's changelog, so the notes can never drift from what shipped: [`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md).
+
 ## Repository layout
 
 ```

@@ -131,6 +131,8 @@ pnpm check:grouping:e2e         # 实机端到端：经真实桥发起 session.c
 - `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.2.0.tgz`）
 - `bridge-browser-0.2.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
+每次发布的说明都是中英双语，由对应包的变更日志生成，因此不会与真正发布的内容脱节：[`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md)。
+
 ## 目录结构
 
 ```
