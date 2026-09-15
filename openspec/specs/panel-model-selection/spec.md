@@ -27,7 +27,7 @@
 
 ### Requirement: 当前选中模型的确定
 
-面板 SHALL 按以下次序确定「当前选中模型」：会话历史响应 `projections.values.modelSelection` 的 `next`，为 null 时取 `lastUsed`，再为 null 或投影缺失时取 `model.catalog` 的 `default`。会话 S 因 `session.selectModel` 成功提交 `model/selection` 事件后，面板 MUST 把当前选中更新为该事件的选择，无需等待下一次历史拉取。面板在每次连接成功后 SHOULD 刷新目录（目录内容可能随 adapter 注册变化）。
+面板 SHALL 按以下次序确定「当前选中模型」：会话历史响应 `projections.values.modelSelection` 的 `next`，为 null 时取 `lastUsed`，再为 null 或投影缺失时取 `model.catalog` 的 `default`。活动会话发生变化时——用户切换到另一个会话，或落到尚未创建的「新会话」——面板 MUST 先清除上一会话的选择显示，再按上述次序对新会话重新确定，MUST NOT 沿用上一会话的选中显示。会话 S 因 `session.selectModel` 成功提交 `model/selection` 事件后，面板 MUST 把当前选中更新为该事件的选择，无需等待下一次历史拉取。面板在每次连接成功后 SHOULD 刷新目录（目录内容可能随 adapter 注册变化）。
 
 #### Scenario: 已选模型的会话显示所选
 
@@ -38,6 +38,11 @@
 
 - **WHEN** 面板新建会话 S 且 S 无任何模型事件，目录 `default` 为 (P, d)
 - **THEN** 面板显示 (P, d) 为当前选中
+
+#### Scenario: 切换会话后重新对齐模型显示
+
+- **WHEN** 面板此前显示会话 S1 的选中模型 (P, m)，用户切换到无任何模型事件的会话 S2，目录 `default` 为 (P, d)
+- **THEN** 面板不再显示 (P, m)，而是显示 (P, d) 为 S2 的当前选中
 
 #### Scenario: 目录失败不阻断对话
 

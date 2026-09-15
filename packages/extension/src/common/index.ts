@@ -13,6 +13,21 @@ export { renderMarkdown } from './tools/markdown.ts'
 export { wrapUntrustedContent } from './tools/untrusted.ts'
 export { fmtTime, formatRegionElement } from './tools/format.ts'
 export { withCode, isRecord, errorCode } from './tools/guards.ts'
+export {
+  buildSessionOptions,
+  formatSessionOption,
+  SESSION_OPTION_LIMIT,
+  type SessionOption,
+  type SessionOptions,
+} from './session-list.ts'
+export {
+  bufferEvent,
+  eventSeq,
+  selectEventsAfterReplay,
+  MAX_BUFFERED_EVENTS,
+  type BufferedSessionEvent,
+  type ReplayHandoff,
+} from './session-events.ts'
 
 // ui
 export { el, type ElOptions } from './ui/el.ts'

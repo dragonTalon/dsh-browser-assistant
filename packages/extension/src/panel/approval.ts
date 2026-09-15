@@ -28,7 +28,14 @@ export function initApproval(): void {
   })
 }
 
-/** Show an approval request. */
+/**
+ * Show an approval request.
+ *
+ * Shown regardless of which session the panel currently displays, unlike
+ * session events: a pending write operation is blocked on this answer, and the
+ * panel is its only answerer — switching sessions must not make it
+ * unanswerable.
+ */
 export function showApproval(request: unknown): void {
   const req = request as { id?: string; summary?: string }
   if (typeof req.id !== 'string') return

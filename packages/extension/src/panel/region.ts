@@ -11,7 +11,7 @@
  */
 
 import { rpc, post } from './transport.ts'
-import { ensureSession, appendSystem, setWorking, getSessionId } from './conversation.ts'
+import { ensureSession, appendSystem, setWorking, getActiveSessionId } from './conversation.ts'
 import { capabilityOf, effectiveSelection } from './model-selector.ts'
 import { formatRegionElement, wrapUntrustedContent, errorCode } from '../common/index.ts'
 import { buildRegionScreenshotText, buildRegionQuestionText } from '@dsh-browser/protocol'
@@ -103,7 +103,7 @@ export async function sendRegion(intent: string): Promise<void> {
   if (pendingRegion === null) return
   // Keep the attachment if there's no session yet, so it can be re-sent.
   if (!await ensureSession()) return
-  const sid = getSessionId()
+  const sid = getActiveSessionId()
   if (sid === null) return
   const region = pendingRegion
   const list = region.elements.map(formatRegionElement).join('\n')

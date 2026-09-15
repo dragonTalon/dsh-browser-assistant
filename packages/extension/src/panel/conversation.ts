@@ -10,12 +10,31 @@
 
 import { rpc } from './transport.ts'
 import { describeRpcError } from './errors.ts'
-import { conversationRow, createWorkingRow, renderMarkdown, type WorkingRow } from '../common/index.ts'
+import { appendLog } from './log.ts'
+import {
+  bufferEvent,
+  conversationRow,
+  createWorkingRow,
+  renderMarkdown,
+  selectEventsAfterReplay,
+  type BufferedSessionEvent,
+  type WorkingRow,
+} from '../common/index.ts'
 
 const logEl = document.getElementById('log')!
 
-let sessionId: string | null = null
+/**
+ * Active session identity — the panel's two-state session machine.
+ *
+ * `null` is the "new session" state: the panel has bound nothing and MUST NOT
+ * create anything until the user actually sends (or picks a model). A non-null
+ * id is a *bound* session — either one this panel created or one adopted from
+ * the session picker; both behave identically from here on.
+ */
+let activeSessionId: string | null = null
 let sessionPromise: Promise<boolean> | null = null
+/** Notified on every identity change so the picker can follow it. */
+let sessionListener: ((sessionId: string | null) => void) | null = null
 let interrupted = false
 let assistantRow: HTMLElement | null = null
 let assistantBuffer = ''
@@ -118,14 +137,39 @@ function appendAssistantChunk(text: string): void {
   logEl.scrollTop = logEl.scrollHeight
 }
 
-/** The current session id, or `null` before first creation. */
-export function getSessionId(): string | null {
-  return sessionId
+/** The bound session id, or `null` while the panel is still on "new session". */
+export function getActiveSessionId(): string | null {
+  return activeSessionId
 }
 
-/** Create the session lazily; concurrent callers share one `session.create`. */
+/** Whether a session is bound (created here or adopted from the picker). */
+export function isBound(): boolean {
+  return activeSessionId !== null
+}
+
+/** Register the single identity observer (set once by `main.ts`). */
+export function setSessionListener(listener: (sessionId: string | null) => void): void {
+  sessionListener = listener
+}
+
+/**
+ * Bind the active session, or clear it with `null` to return to "new session".
+ * Idempotent; the observer fires only on an actual change.
+ */
+export function bindSession(sessionId: string | null): void {
+  const next = typeof sessionId === 'string' && sessionId !== '' ? sessionId : null
+  if (next === activeSessionId) return
+  activeSessionId = next
+  sessionListener?.(next)
+}
+
+/**
+ * Ensure the panel has a session identity: a bound session is returned as-is,
+ * otherwise one is created now. Creation stays lazy so opening the panel never
+ * litters dsh's session list. Concurrent callers share one `session.create`.
+ */
 export async function ensureSession(): Promise<boolean> {
-  if (sessionId !== null) return true
+  if (activeSessionId !== null) return true
   if (sessionPromise === null) {
     sessionPromise = (async () => {
       try {
@@ -134,8 +178,8 @@ export async function ensureSession(): Promise<boolean> {
           appendSystem('创建会话失败：dsh 返回异常')
           return false
         }
-        sessionId = created.sessionId
-        appendSystem(`会话 ${sessionId.slice(0, 8)}…`)
+        bindSession(created.sessionId)
+        appendSystem(`会话 ${created.sessionId.slice(0, 8)}…`)
         return true
       } catch (e) {
         appendSystem(`创建会话失败: ${describeRpcError(e)}`)
@@ -150,6 +194,10 @@ export async function ensureSession(): Promise<boolean> {
 export async function sendText(text: string): Promise<void> {
   if (text === '') return
   if (!await ensureSession()) return
+  // Capture the identity: a session switch while creation/awaiting was in
+  // flight must not redirect this message into another conversation.
+  const sessionId = activeSessionId
+  if (sessionId === null) return
   setWorking(true)
   try {
     await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
@@ -179,4 +227,76 @@ export function clear(): void {
   assistantRow = null
   assistantBuffer = ''
   setWorking(false)
+}
+
+// ---- history replay ----
+//
+// A replay renders a history snapshot while the session may keep producing
+// events. Live frames are buffered for the duration and handed back at the end
+// so the caller can apply exactly the ones the snapshot cannot contain; that
+// closes the window between the snapshot being taken upstream and its response
+// reaching the panel, which a plain clear+replay would silently erase.
+
+/** Session whose history is currently being replayed, or `null`. */
+let replaySessionId: string | null = null
+/** Live frames held back during the current replay, in arrival order. */
+let replayBuffer: BufferedSessionEvent[] = []
+
+/**
+ * Start a replay: clear the transcript, then hold back live events until
+ * {@link endReplay}. A second call supersedes the first — the earlier caller's
+ * {@link endReplay} becomes a no-op, so a superseded replay can neither render
+ * nor flush anything.
+ */
+export function beginReplay(sessionId: string): void {
+  replaySessionId = sessionId
+  replayBuffer = []
+  clear()
+}
+
+/** Whether a replay is in flight (the caller then buffers instead of rendering). */
+export function isReplaying(): boolean {
+  return replaySessionId !== null
+}
+
+/** Hold back one live event for the in-flight replay of the same session. */
+export function bufferLiveEvent(sessionId: string, event: unknown): void {
+  if (replaySessionId === null || replaySessionId !== sessionId) return
+  const frame = bufferEvent(sessionId, event)
+  if (frame !== undefined) replayBuffer.push(frame)
+}
+
+/**
+ * Finish a replay and return the buffered live frames the snapshot cannot
+ * contain, in sequence order, for the caller to dispatch like any other live
+ * event. Frames already inside the snapshot are dropped here rather than
+ * de-duplicated by the renderer.
+ *
+ * @param sessionId - session this replay was for; a superseded replay returns nothing.
+ * @param replayMaxSeq - highest sequence the replay applied; negative when empty.
+ * @param hasMore - whether the history was truncated, i.e. older events exist.
+ * @returns buffered frames to apply, oldest first.
+ */
+export function endReplay(
+  sessionId: string,
+  replayMaxSeq: number,
+  hasMore: boolean,
+): readonly BufferedSessionEvent[] {
+  if (replaySessionId !== sessionId) return []
+  replaySessionId = null
+  const { apply, dropped } = selectEventsAfterReplay(replayBuffer, replayMaxSeq)
+  replayBuffer = []
+  if (hasMore) prependSystem('更早消息未显示')
+  if (dropped > 0) {
+    // Only reachable when a history read stalls long enough to overrun the
+    // buffer, or when a frame arrives without a usable sequence.
+    appendLog({ time: Date.now(), level: 'warn', msg: `会话历史重放丢弃了 ${dropped} 条实时事件` })
+  }
+  return apply
+}
+
+/** Insert a centered notice above the transcript (older-history notice). */
+export function prependSystem(text: string): void {
+  const row = conversationRow('system', text)
+  logEl.insertBefore(row, logEl.firstChild)
 }

@@ -7,11 +7,13 @@
  */
 
 import type { BridgeState } from '../background/bridge.ts'
+import { eventSeq } from '../common/index.ts'
 import { setMessageListener, post, rpc, settleRpcResult } from './transport.ts'
 import { setStatus, setActivePage } from './status.ts'
 import * as log from './log.ts'
 import * as conversation from './conversation.ts'
 import * as modelSelector from './model-selector.ts'
+import * as sessionSelector from './session-selector.ts'
 import * as region from './region.ts'
 import * as question from './question.ts'
 import * as approval from './approval.ts'
@@ -58,9 +60,23 @@ function handleEvent(serverFrame: unknown): void {
   const outer = serverFrame as { t?: string; frame?: unknown }
   const f = (outer.t === 'event' && outer.frame !== undefined ? outer.frame : outer) as { method?: string; payload?: unknown }
   if (f.method === 'session/event') {
-    const payload = f.payload as { event?: unknown } | undefined
-    if (payload?.event !== undefined) handleSessionEvent(payload.event)
+    const payload = f.payload as { sessionId?: unknown; event?: unknown } | undefined
+    const sessionId = payload?.sessionId
+    const event = payload?.event
+    if (typeof sessionId !== 'string' || event === undefined) return
+    // Session isolation. The bridge follows one session per connection, but a
+    // switch can leave frames of the previous session queued; rendering those
+    // would graft one conversation onto another.
+    if (sessionId !== conversation.getActiveSessionId()) return
+    if (conversation.isReplaying()) {
+      conversation.bufferLiveEvent(sessionId, event)
+      return
+    }
+    handleSessionEvent(event)
   } else if (f.method === 'question/requested') {
+    // Interactions are deliberately NOT session-filtered: the panel is the only
+    // answerer for a session it has prompted, so dropping a question that
+    // belongs to a session the user switched away from would hang that turn.
     // rpcId sits on the outer HostEventFrame, not inside payload.
     question.showQuestion((f as { rpcId?: unknown }).rpcId, f.payload)
   } else if (f.method === 'question/resolved') {
@@ -68,23 +84,64 @@ function handleEvent(serverFrame: unknown): void {
   }
 }
 
-// ---- history reload on reconnect ----
+// ---- session binding ----
 
-async function reloadHistory(): Promise<void> {
-  if (conversation.getSessionId() === null) return
+/**
+ * Bind a session and present its transcript.
+ *
+ * Replay owns the transcript until it ends: live frames for `sessionId`
+ * arriving meanwhile are buffered by `handleEvent` and applied afterwards by
+ * sequence, which is what keeps an event emitted between the history snapshot
+ * and its response from being erased by the clear+replay.
+ *
+ * Deliberately NOT via `session.create { sessionId }`: an existing session
+ * already owns a working directory, and creating it by identity makes the
+ * bridge inject its configured workspace, which dsh rejects with
+ * `session/conflict` — and it would re-home the session into that workspace.
+ * A cold session is resumed by dsh itself on the next prompt.
+ */
+async function openSession(sessionId: string): Promise<void> {
+  conversation.bindSession(sessionId)
+  modelSelector.resetSelection()
+  conversation.beginReplay(sessionId)
   try {
-    const page = await rpc<{ events?: unknown }>('session.history', { sessionId: conversation.getSessionId() })
-    // Re-align the model selection from the projection before re-rendering.
-    modelSelector.alignFromProjections(page)
-    if (!Array.isArray(page?.events)) return
-    conversation.clear()
-    for (const entry of page.events) {
-      const ev = (entry as { event?: unknown } | undefined)?.event
-      if (ev !== undefined) handleSessionEvent(ev)
+    const page = await rpc<{ events?: unknown; hasMore?: unknown }>('session.history', { sessionId })
+    // Superseded by a newer switch: that switch already owns the transcript and
+    // the buffer, so this replay must contribute neither.
+    if (conversation.getActiveSessionId() !== sessionId) return
+    let maxSeq = -1
+    if (Array.isArray(page?.events)) {
+      for (const entry of page.events) {
+        const event = (entry as { event?: unknown } | undefined)?.event
+        if (event === undefined) continue
+        const seq = eventSeq(event)
+        if (seq !== undefined && seq > maxSeq) maxSeq = seq
+        handleSessionEvent(event)
+      }
     }
-  } catch {
-    /* history fetch failure: keep current state */
+    // After the replay: the history projection is authoritative over any
+    // `model/selection` event inside the snapshot. Buffered live frames are
+    // newer than both and are applied last, by `endReplay`.
+    modelSelector.alignFromProjections(page)
+    for (const frame of conversation.endReplay(sessionId, maxSeq, page?.hasMore === true)) {
+      handleSessionEvent(frame.event)
+    }
+  } catch (error: unknown) {
+    if (conversation.getActiveSessionId() !== sessionId) return
+    conversation.appendSystem(`读取会话历史失败: ${errors.describeRpcError(error)}`)
+    // Without a usable boundary, apply every buffered frame in arrival order:
+    // the live tail is all this session can show now.
+    for (const frame of conversation.endReplay(sessionId, -1, false)) {
+      handleSessionEvent(frame.event)
+    }
   }
+}
+
+/** Return to "new session": unbind, forget the transcript, reset the model row. */
+function startNewSession(): void {
+  conversation.bindSession(null)
+  conversation.clear()
+  modelSelector.resetSelection()
 }
 
 // ---- inbound panel messages ----
@@ -115,13 +172,20 @@ function onPortMessage(message: unknown): void {
       const wasConnected = lastState === 'connected'
       lastState = s.state
       modelSelector.setConnected(s.state === 'connected')
+      sessionSelector.setConnected(s.state === 'connected')
       if (s.state === 'connected') {
-        // Refresh the catalog on (re)connect — adapters can change between runs.
-        if (!wasConnected) void modelSelector.loadCatalog()
-        if (conversation.getSessionId() === null) void conversation.ensureSession()
-        else if (!wasConnected && conversation.isInterrupted()) {
+        // Refresh the catalog and the session candidates on (re)connect —
+        // adapters and sessions can both change between runs.
+        if (!wasConnected) {
+          void modelSelector.loadCatalog()
+          void sessionSelector.loadSessions()
+        }
+        const active = conversation.getActiveSessionId()
+        if (active !== null && !wasConnected) {
+          // Re-present the bound session so output produced while disconnected
+          // is back on screen; the bridge backfills its own event window too.
           conversation.setInterrupted(false)
-          void reloadHistory() // recover output missed while disconnected
+          void openSession(active)
         }
       } else if (conversation.isWorking()) {
         // Disconnect mid-turn: drop the indicator and mark the turn interrupted.
@@ -171,6 +235,10 @@ question.initQuestion()
 approval.initApproval()
 region.initRegion()
 modelSelector.initModelSelector()
+sessionSelector.initSessionSelector((sessionId) => {
+  if (sessionId === null) startNewSession()
+  else void openSession(sessionId)
+})
 settings.initSettings()
 
 sendBtn.addEventListener('click', () => { void send() })
@@ -178,10 +246,12 @@ inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() }
 })
 
-// Initial render (startup placeholder: "等待连接 dsh…"), then connect and ask
-// the background for its current status. The session is created lazily once
-// `status` reports connected, avoiding a `session.create` before the bridge is up.
+// Initial render (startup placeholders: "等待连接 dsh…"/"等待连接…"), then
+// connect and ask the background for its current status. Nothing is created
+// here: the panel stays on "new session" until the user actually sends, so
+// opening it never litters dsh's session list.
 modelSelector.renderModelRow()
+sessionSelector.renderSessionRow(true)
 post({ type: 'request-status' })
 
 // 20s heartbeat keeps the background SW alive during long model turns (prevents

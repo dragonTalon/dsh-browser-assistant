@@ -34,6 +34,7 @@ One pnpm workspace, two halves joined by one WebSocket:
 | Page awareness | extension tracks the active tab and injects its URL/title into each prompt as context |
 | Region capture | user drag-selects a page region → cropped screenshot + DOM element list → sent to a vision-capable model |
 | Model selection | panel re-pulls `model.catalog` on connect; dropdown with capability badge (vision / text / unknown) → `session.selectModel` |
+| Session picker | dropdown over `session.list` (new session by default, created lazily on first send); picking a past session binds it and replays its history — no orphans, no `session.create` |
 
 Security model: the bridge carries its own bearer token; reads are auto-allowed, state-changing actions fail closed behind a side-panel approval; passwords/card numbers are masked and never leave the page. A remote connection requires the token and relaxes none of the above.
 

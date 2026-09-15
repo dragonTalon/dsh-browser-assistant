@@ -10,7 +10,7 @@
 
 import { rpc } from './transport.ts'
 import { describeCodeSuffix, describeRpcError } from './errors.ts'
-import { ensureSession, appendSystem, getSessionId } from './conversation.ts'
+import { ensureSession, appendSystem, getActiveSessionId } from './conversation.ts'
 import { el, errorCode } from '../common/index.ts'
 
 const modelSelectEl = document.getElementById('modelSelect') as HTMLSelectElement
@@ -163,6 +163,18 @@ export function setConnected(value: boolean): void {
   renderModelRow()
 }
 
+/**
+ * Clear the displayed selection, falling back to the catalog default.
+ *
+ * The active session changed, so the previous session's choice must not linger
+ * on screen: `alignFromProjections` only ever *sets* a selection, and a session
+ * carrying no model event of its own would otherwise keep showing the old one.
+ */
+export function resetSelection(): void {
+  currentSelection = null
+  renderModelRow(true)
+}
+
 /** Bind the dropdown change handler (called once from `main.ts`). */
 export function initModelSelector(): void {
   modelSelectEl.addEventListener('change', () => { void onModelChange() })
@@ -174,7 +186,7 @@ async function onModelChange(): Promise<void> {
   const previous = effectiveSelection()
   renderModelRow(true) // restore the real selection before the pending state
   if (!await ensureSession()) { renderModelRow(true); return }
-  const sid = getSessionId()
+  const sid = getActiveSessionId()
   if (sid === null) { renderModelRow(true); return }
   selectingModel = true
   currentSelection = { provider: target.provider, model: target.model }

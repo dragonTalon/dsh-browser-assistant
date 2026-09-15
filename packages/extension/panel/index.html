@@ -29,6 +29,22 @@
     #pageUrl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; color: #666; }
     @media (prefers-color-scheme: dark) { #pageUrl { color: #999; } }
 
+    /* 会话选择：本次驱动哪个 dsh 会话（默认「新会话」，惰性创建） */
+    #sessionRow { font-size: 11px; }
+    #sessionRow .label { color: #8a8a8a; flex: none; width: 44px; }
+    #sessionSelect {
+      flex: 1; min-width: 0; max-width: 100%; font: inherit; font-size: 11px;
+      padding: 3px 6px; border-radius: 6px; border: 1px solid rgba(128,128,128,.35);
+      background: transparent; color: inherit; cursor: pointer;
+    }
+    #sessionSelect:disabled { opacity: .55; cursor: default; }
+    #sessionSelect option { color: #111; background: #fff; font-size: 13px; }
+    #sessionSelect option:disabled { color: #999; }
+    @media (prefers-color-scheme: dark) {
+      #sessionSelect option { color: #eee; background: #262626; }
+      #sessionSelect option:disabled { color: #888; }
+    }
+
     /* 模型选择器（输入区内丸状控件，与 dsh GUI 的位置/观感对齐） */
     #modelWrap { flex: 0 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; }
     #modelSelect {
@@ -190,6 +206,10 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
+    </div>
+    <div class="row" id="sessionRow">
+      <span class="label">会话</span>
+      <select id="sessionSelect" disabled title="选择本次驱动哪个 dsh 会话；默认「新会话」"></select>
     </div>
     <div class="row" id="pageRow">
       <span class="label">当前页</span>

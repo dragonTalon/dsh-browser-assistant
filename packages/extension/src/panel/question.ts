@@ -28,7 +28,15 @@ export function initQuestion(): void {
   questionDismissBtn.addEventListener('click', () => { respondToQuestion({ ok: false }) })
 }
 
-/** Show a new question request. */
+/**
+ * Show a new question request.
+ *
+ * Shown regardless of which session the panel currently displays, unlike
+ * session events: the panel is the only answerer for a session it has prompted,
+ * so hiding a question that belongs to a session the user switched away from
+ * would leave that turn hanging. The answer carries the question's own
+ * `sessionId`, so it can never land in the wrong conversation.
+ */
 export function showQuestion(rpcId: unknown, payload: unknown): void {
   const p = payload as { sessionId?: string; questions?: unknown }
   if (typeof rpcId !== 'string' || !Array.isArray(p.questions) || p.questions.length === 0) return

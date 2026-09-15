@@ -43,7 +43,8 @@ MV3 扩展，三段式：**service worker（控制中心）+ content script（�
 - `tabs.onActivated`/`onUpdated`/`windows.onFocusChanged` 追踪活动标签页（URL+标题），面板实时显示，并在 `session.prompt` 时注入 `[网页描述]：<title> (<url>)`，让模型有上下文。
 
 ### 对话与交互
-- **简单对话**：`session.create` → `session.prompt` → 订阅 `event` 流渲染；「正在分析」指示覆盖「思考→调工具→执行→输出」全程（严格跟随 turn：`turn/start` 显示、`turn/end` 清除，中间文本/工具事件不清除）。
+- **简单对话**：会话身份由「会话选择」决定；首次发送时才 `session.create` → `session.prompt` → 订阅 `event` 流渲染；「正在分析」指示覆盖「思考→调工具→执行→输出」全程（严格跟随 turn：`turn/start` 显示、`turn/end` 清除，中间文本/工具事件不清除）。
+- **会话选择**：状态栏「会话」下拉，首项恒为「新会话」且默认选中。候选来自只读的 `session.list`：排除空会话与子代理会话、按最近活动倒序、最多 50 项（超出时末尾以不可选项说明），每项以 `[工作目录名]` 方括号前缀开头（工作目录未知时省略），随后是标题（无标题回退会话标识前 8 位）、运行中标记与相对时间。**打开与重连都不创建会话**——只有首次发送（或首次为本会话选模型）才 `session.create {}`，因此未使用的面板不再在 dsh 里留下孤儿会话。选中历史会话即绑定并读 `session.history` 重放（先清空再按序重放，`hasMore` 时顶部提示「更早消息未显示」）；**不走 `session.create { sessionId }`**——那条路会被注入桥配置的 `sessionWorkspace`，cwd 不匹配时 dsh 直接 `session/conflict`，且会把会话改挂到该工作区；冷会话由 dsh 在首次 prompt 时自行 resume。事件按 `sessionId` 隔离（切换瞬间的旧会话残留帧被丢弃），重放期间到达的实时帧按 `seq` 缓冲、重放后补齐，切换会话不取消原会话的进行中 turn，切回时依赖桥接的按会话游标回补。dsh 提问与浏览器操作审批**刻意不按会话过滤**：被切走的会话上仍有待答交互时，面板是唯一应答者。
 - **模型选择与能力标记**：输入区左侧的丸状下拉（与 dsh GUI 同位置同款观感）每次 connected 后重拉 `model.catalog`（只读）。当前选中的确定次序：会话历史 `projections.values.modelSelection` 的 `next` → `lastUsed` → 目录 `default`；同步通道三条——`session.selectModel` 成功乐观更新、事件流里的 `model/selection` 即时对齐、重连 `session.history` 投影兜底。多模态标记三元态：候选/当前模型 `inputModalities` 含 `image`→「视觉」、公布且不含→「文本」、未公布或目录查无此项→「能力未知」（不臆断），当前模型的能力另以小 badge 紧随下拉。下拉选定即调 `session.selectModel`；**该 dsh 行为会同时改写部署默认模型**（`agentDefaultModel.saveSelection`），以便在选择器 tooltip 常驻如实提示。目录拉取失败时选择器显示「模型不可用」并在对话里给出含错误码的失败行，不阻断消息收发。
 - **dsh 提问**（`ask_user_question`）：`question/requested` 弹问题框（选项/自定义输入），作答经 `respond` 回传。
 - **状态/日志**：顶部状态条（连接态+地址+重连次数+当前页）+ 可折叠日志面板（info/warn/error 分色，环形缓冲回放）。
