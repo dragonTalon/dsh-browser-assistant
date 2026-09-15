@@ -9,7 +9,7 @@
 | 文件 | 职责 |
 |---|---|
 | `index.ts` | 插件入口：`inject` 声明依赖、解析配置、注册路由/工具、dsh 版本探测、模型服务探测 |
-| `protocol.ts` → `@dsh-browser/protocol` | 帧类型+解析器（与扩展共享，唯一真相源） |
+| `protocol.ts` → [`@dsh-browser/protocol`](protocol.md) | 帧类型+解析器（与扩展共享，唯一真相源） |
 | `model-catalog.ts` | 模型目录组装：`llm`/`agentDefaultModel` 的结构化窄接口 + 逐 provider 故障隔离 |
 | `server.ts` | WebSocket 服务器：鉴权、单连接、RPC 透传、工具分发、事件泵 |
 | `remote-host-api.ts` | **Host 适配层**：把 Typert Gateway + Connection 包装成 `BrowserHostApi` |
@@ -39,6 +39,8 @@
 
 - `session.history` / `workspace.list`：gateway `wireStream` 上的一层组装（快照展开 / baseline 取值）。
 - `model.catalog`：**纯进程内**读取 `llm`+`agentDefaultModel`，返回 `{ default, groups, failures }`；每个 provider 的目录查询独立 try/catch 进 `failures`，不拖垮其余；服务未探测到时返回 `llm-unavailable`，连接与其他 RPC 不受影响。
+- `skills.list`：把扩展的技能目录请求转发到网关的 `skills/list`（`args: { request: { sessionId } }`）。**技能是与命令平行的另一个命名空间**：它没有执行端点，调用方式是发一条普通 `session.prompt`，由宿主 pre-step 边界的手势识别注入技能正文。与 `commands.list` 不同，它经 `sessionQuery` 观察会话来定 scope，**不会 resume 未激活的会话**；请求失败时面板降级为「本次没有技能」，不牵连命令目录。
+- `commands.list` / `commands.execute`：把扩展的斜杠命令请求转发到网关的 `commands/list` 与 `commands/execute`。载荷中的 `sessionId` 由网关的 `agentId` 查找解析成活体 Agent——该查找器被会话控制器覆盖为「没有活体就 resume」，因此**对未激活的历史会话也能解析，代价是把它真正复活**（面板唤起菜单即会触发）。`commands.execute` 的载荷必须同时携带 `sessionId`（见下方按会话串行化），且 `submittedAttachments` 显式送空数组：面板命令从不携带附件，固定线上形状好过依赖端点的可选参数默认值。缺失或空的 `sessionId`、空的 `line` 一律 `bad-request`。
 
 ## 核心机制
 
@@ -48,7 +50,8 @@
 | **回环免密** | 回环连接免 token，但要求 `chrome-extension://` Origin（页面伪造不了该头）；非回环必须带 token |
 | **特权隔离** | `settings.*`/`credentials.*`/`host.open*` 等对非回环来源**即使有 token 也拒绝**（防御 `--host 0.0.0.0` 部署） |
 | **单连接** | 同一时刻只允许一个扩展连接，新连接顶替旧的（旧 socket 收 4000，in-flight 工具以 `bridge-closed` 结算） |
-| **RPC 透传** | 扩展的 `rpc` 帧按方法名路由到网关；`session.prompt`/`session.cancel` 按会话串行化保证顺序 |
+| **RPC 透传** | 扩展的 `rpc` 帧按方法名路由到网关；`session.prompt`/`session.cancel`/`commands.execute` 按会话串行化保证顺序——斜杠命令改的是下一条 prompt 所处的会话状态（`/plan off` 就是例子），所以「先敲命令再发消息」必须按用户的操作顺序抵达宿主 |
+| **保序 RPC 的有界等待** | 按会话串行化意味着一次调用在它结束前一直占着该会话的队列槽位，而宿主命令执行端点的应答要等 handler 结束才产生（如 `/compact` 压缩大量对话）。因此 ordered RPC 另有一道 120s 的有界等待：超时后桥接中止该调用自身的 signal、以 `rpc.result` 失败收尾（错误码 `timeout`），并**释放队列槽位**，使该会话后续的 prompt/cancel/execute 不被一条长命令无限期挡住。两类保证强度不同：**释放槽位是硬保证**（由调用 settle 驱动），**中止宿主是尽力而为**——宿主的 `withAbort` 只包装 Promise，已在运行的 handler 不会因此停下，是否响应取消由各命令自己决定（实测：`/compact` 会停并自行补一条 `command/done`；`/goal`、`/permission`、`/feedback`、`/export` 不会）。所以超时文案只说「未在时限内应答、可能仍在执行、结果以事件流为准」，**绝不声称命令已取消** |
 | **工具分发** | `tool.call` 帧携带 `expiresAt`，超时/取消发 `tool.cancel` 撤回；结果经 `tool.result` 归一为 `{text}` |
 | **事件泵** | 连接建立即开 `$events` 流；首个 `session.prompt` 时开 `session/follow` 跟随该会话，把增量事件转成 `event` 帧 |
 | **断代续订** | 换代（重连）后新事件代自动重开最近会话的 `session/follow`；按跨代 seq 游标把断连窗口错过的事件从快照回补推送（先于任何 `session.history` 应答入队，与面板重渲染天然去重）；恢复失败静默降级，不拖垮新连接 |
