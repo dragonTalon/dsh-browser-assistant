@@ -62,6 +62,27 @@
 | `toolTimeoutMs` | number | 90000 | 单次工具调用预算（覆盖扩展 60s 审批窗口） |
 | `snapshotMaxChars` | number | 32000 | 单次快照字符上限（最小 500，经 `hello.ok` 协商给扩展） |
 | `maxInteractiveItems` | number | 60 | 快照交互清单条目上限 |
+| `sessionWorkspace` | string | 未启用 | 扩展创建的会话归入哪个工作区：填一个**已存在**的绝对目录路径；缺省、空串或纯空白时不启用 |
+
+### 会话工作区分组（`sessionWorkspace`）
+
+配置后，桥接层转发扩展发起的 `session.create` 时会先**幂等**地把该目录注册为 dsh 工作区，再把解析出的 `workspaceId` 注入请求，使新会话成为该工作区成员——在 dsh GUI 侧边栏里按目录 basename 分组显示，而不是堆在「未分组」。
+
+注意分组判定只认工作区的**成员账本**（`sessionIds`），不比对 `cwd`；因此只给会话补一个 `cwd` 是不会产生分组的，必须给到 `workspaceId`。
+
+- **只影响新建会话**：dsh 唯一的「收养」入口要求会话 header 的 `cwd` 等于工作区 path，历史会话 cwd 不同，无法迁移；存量会话需在 GUI 侧自行处理。
+- **显式位置优先**：请求自带 `workspaceId` 或 `cwd` 时不注入，调用方的选择原样透传。
+- **失败不连累会话创建**：目录不存在或注册被拒时会话照常创建（仅落回「未分组」），并输出一行含配置路径的诊断日志；失败**不会被永久缓存**，目录恢复后下次会话自动重新注册。
+- **配置为权威**：若在 GUI 中删除了该工作区，下一次扩展创建会话会按配置重新登记它。要停用请移除本配置项，而不是删除工作区。
+- **不建目录**：插件不创建目录（避免掩盖路径拼写错误），目录存在性由部署保证。
+
+> 机器相关的绝对路径**不要**写进随包发布的 `cordis.patch.yml`，而应写进 profile 覆盖层（该文件后于所有 bundle 层应用，且随 profile 热加载）：
+>
+> ```yaml
+> - id: bridge-dsh
+>   config:
+>     sessionWorkspace: /absolute/path/to/your/project
+> ```
 
 ## 工具清单
 

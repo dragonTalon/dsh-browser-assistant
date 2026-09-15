@@ -61,6 +61,11 @@ export interface Config {
   snapshotMaxChars?: number
   /** Upper bound on interactive inventory items per snapshot. Defaults to 60. */
   maxInteractiveItems?: number
+  /**
+   * Absolute directory whose dsh Workspace owns Sessions the extension creates.
+   * When absent (or blank), extension Sessions keep dsh's own default placement.
+   */
+  sessionWorkspace?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -68,10 +73,24 @@ export const Config: z<Config> = z.object({
   toolTimeoutMs: z.number().step(1).min(1).default(DEFAULT_TOOL_TIMEOUT_MS),
   snapshotMaxChars: z.number().step(1).min(MIN_SNAPSHOT_MAX_CHARS).default(DEFAULT_SNAPSHOT_MAX_CHARS),
   maxInteractiveItems: z.number().step(1).min(1).default(DEFAULT_MAX_INTERACTIVE_ITEMS),
+  sessionWorkspace: z.string(),
 })
 
 /** The shape after schemastery applies its defaults to every field. */
-type ResolvedConfig = Required<Omit<Config, 'token'>> & Pick<Config, 'token'>
+type ResolvedConfig = Required<Omit<Config, 'token' | 'sessionWorkspace'>>
+  & Pick<Config, 'token' | 'sessionWorkspace'>
+
+/**
+ * Normalize the configured Session Workspace directory: an absent, empty, or
+ * whitespace-only setting means "not configured" and must stay inert.
+ * @param value - raw config value.
+ * @returns the configured directory, or undefined when the feature is off.
+ */
+export function normalizeSessionWorkspace(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
 
 export function assertPositiveInteger(name: string, value: number): void {
   if (!Number.isInteger(value) || value < 1) {
@@ -80,8 +99,10 @@ export function assertPositiveInteger(name: string, value: number): void {
 }
 
 export function resolveConfig(config: Config): ResolvedConfig {
+  const sessionWorkspace = normalizeSessionWorkspace(config.sessionWorkspace)
   const resolved: ResolvedConfig = {
     ...(config.token === undefined ? {} : { token: config.token }),
+    ...(sessionWorkspace === undefined ? {} : { sessionWorkspace }),
     toolTimeoutMs: config.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS,
     snapshotMaxChars: config.snapshotMaxChars ?? DEFAULT_SNAPSHOT_MAX_CHARS,
     maxInteractiveItems: config.maxInteractiveItems ?? DEFAULT_MAX_INTERACTIVE_ITEMS,
@@ -121,7 +142,16 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ctx.logger.warn('bridge-dsh: llm/agentDefaultModel 服务未探测到，model.catalog 将返回 llm-unavailable')
   }
 
-  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection, modelServices))
+  const sessionGrouping = resolved.sessionWorkspace === undefined
+    ? undefined
+    : {
+        workspacePath: resolved.sessionWorkspace,
+        // Grouping is an enhancement: a misconfigured directory must stay
+        // diagnosable without ever failing Session creation.
+        warn: (message: string) => { ctx.logger.warn(message) },
+      }
+
+  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection, modelServices, sessionGrouping))
 }
 
 function mountBridge(

@@ -62,6 +62,27 @@ There is also a set of **probed optional services** (not in `inject`; discovered
 | `toolTimeoutMs` | number | 90000 | per-tool-call budget (covers the extension's 60s approval window) |
 | `snapshotMaxChars` | number | 32000 | max characters per snapshot (min 500, negotiated to the extension via `hello.ok`) |
 | `maxInteractiveItems` | number | 60 | max interactive inventory items per snapshot |
+| `sessionWorkspace` | string | off | which Workspace owns extension-created Sessions: an **existing** absolute directory path; absent, empty, or whitespace-only leaves the feature off |
+
+### Session workspace grouping (`sessionWorkspace`)
+
+When configured, forwarding an extension-originated `session.create` first registers that directory as a dsh Workspace (**idempotently**), then injects the resolved `workspaceId` so the new Session becomes a member of that Workspace — shown in the dsh GUI sidebar grouped under the directory's basename instead of piling up in "Ungrouped".
+
+Note that grouping is decided solely by the Workspace's **membership account** (`sessionIds`), never by comparing `cwd`; adding a `cwd` alone therefore produces no grouping — only a `workspaceId` does.
+
+- **New Sessions only**: dsh's only adoption entry point requires the Session header's `cwd` to equal the Workspace path, so historical Sessions (different cwd) cannot be migrated; handle those in the GUI.
+- **Explicit location wins**: nothing is injected when the request already carries `workspaceId` or `cwd`; the caller's choice passes through untouched.
+- **Failure never blocks Session creation**: a missing directory or a rejected registration still creates the Session (it merely falls back to "Ungrouped") and emits one diagnostic line carrying the configured path. Failures are **never cached permanently**, so a recovered directory re-registers on the next Session.
+- **Configuration is authoritative**: deleting the Workspace in the GUI makes the next extension-created Session register it again. To turn the feature off, remove this key rather than deleting the Workspace.
+- **No directory creation**: the plugin does not create directories (that would mask a path typo); existence is the deployment's responsibility.
+
+> Keep machine-specific absolute paths **out of** the published `cordis.patch.yml`; put them in the profile override layer, which is applied after every bundle layer and hot-reloaded with the profile:
+>
+> ```yaml
+> - id: bridge-dsh
+>   config:
+>     sessionWorkspace: /absolute/path/to/your/project
+> ```
 
 ## Tool list
 

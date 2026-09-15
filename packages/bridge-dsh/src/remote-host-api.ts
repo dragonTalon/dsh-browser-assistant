@@ -48,12 +48,27 @@ export interface HostConnectionLike {
   }
 }
 
+/**
+ * Deployment inputs for placing extension-created Sessions in a dsh Workspace.
+ * Absent, or with no {@link SessionGroupingOptions.workspacePath}, the forwarded
+ * `session.create` request must stay field-for-field identical to the caller's.
+ */
+export interface SessionGroupingOptions {
+  /** Absolute directory whose Workspace owns extension-created Sessions. */
+  readonly workspacePath?: string
+  /** Sink for non-fatal grouping diagnostics; absent → silent. */
+  readonly warn?: (message: string) => void
+}
+
 interface InvokeTarget {
   readonly namespace: string
   readonly method: string
   readonly args: Readonly<Record<string, unknown>>
   readonly adapt?: (value: unknown) => unknown
 }
+
+/** dsh error code for a Workspace identity that no longer resolves. */
+const WORKSPACE_NOT_FOUND = 'workspace/not-found'
 
 interface SessionSnapshot {
   /** Inclusive Host log tip from session/follow; required for later session/page calls. */
@@ -73,8 +88,9 @@ export function createRemoteHostApi(
   gateway: TypertGatewayLike,
   connection: HostConnectionLike,
   modelServices?: ModelCatalogServices,
+  sessionGrouping?: SessionGroupingOptions,
 ): BrowserHostApi {
-  return new RemoteHostApi(gateway, connection, modelServices)
+  return new RemoteHostApi(gateway, connection, modelServices, sessionGrouping)
 }
 
 class RemoteHostApi implements BrowserHostApi {
@@ -89,12 +105,23 @@ class RemoteHostApi implements BrowserHostApi {
    */
   private lastFollowedSessionId: string | undefined
   private activeEvents: EventGeneration | undefined
+  /**
+   * Workspace id owning extension-created Sessions, resolved from
+   * `sessionGrouping.workspacePath`. Only a SUCCESS is cached: a failed
+   * resolution must be retried by the next `session.create`, otherwise a
+   * transiently missing directory would pin the bridge to "ungrouped".
+   */
+  private groupedWorkspaceId: string | undefined
+  /** In-flight registration so concurrent creates share one `workspace.create`. */
+  private groupedWorkspacePending: Promise<string | undefined> | undefined
 
   constructor(
     private readonly gateway: TypertGatewayLike,
     connection: HostConnectionLike,
     /** Probed `llm`/`agentDefaultModel` pair; absent → model.catalog fails cleanly. */
     private readonly modelServices?: ModelCatalogServices,
+    /** Deployment Session-grouping inputs; absent → create requests stay untouched. */
+    private readonly sessionGrouping?: SessionGroupingOptions,
   ) {
     this.fetchHandler = connection.createSharedFetchHandler('/api')
   }
@@ -115,12 +142,32 @@ class RemoteHostApi implements BrowserHostApi {
         const sessionId = sessionIdOf(call.payload)
         if (sessionId !== undefined) await this.activeEvents?.ensureSessionFollow(sessionId, call.signal)
       }
-      const value = await this.gateway.invoke({
-        namespace: target.namespace,
-        method: target.method,
-        args: target.args,
-        signal: call.signal,
-      })
+      const groupedWorkspaceId = call.method === 'session.create' && !namesOwnLocation(call.payload)
+        ? await this.resolveGroupedWorkspaceId(call.signal)
+        : undefined
+      let value: unknown
+      try {
+        value = await this.gateway.invoke({
+          namespace: target.namespace,
+          method: target.method,
+          args: groupedWorkspaceId === undefined
+            ? target.args
+            : withWorkspaceId(target.args, groupedWorkspaceId),
+          signal: call.signal,
+        })
+      } catch (error: unknown) {
+        // A cached Workspace identity goes stale when the user deletes it in the
+        // GUI. Retry the caller's ORIGINAL request exactly once so a stale
+        // identity degrades to "ungrouped" instead of failing the Session.
+        if (groupedWorkspaceId === undefined || hostFailure(error).code !== WORKSPACE_NOT_FOUND) throw error
+        this.groupedWorkspaceId = undefined
+        value = await this.gateway.invoke({
+          namespace: target.namespace,
+          method: target.method,
+          args: target.args,
+          signal: call.signal,
+        })
+      }
       // Only claim ownership after a successful create/prompt. A failed prompt
       // against a Desktop session must not steal later ask_user_question away
       // from the native waterfall.
@@ -132,6 +179,53 @@ class RemoteHostApi implements BrowserHostApi {
       return { ok: true, value: target.adapt?.(value) ?? value }
     } catch (error: unknown) {
       return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * Resolve the Workspace that should own an extension-created Session.
+   * Registration is idempotent, so an already-registered directory resolves to
+   * its existing identity without writing. Failures are never cached.
+   * @param signal - the caller's RPC signal.
+   * @returns the Workspace id, or undefined when grouping is off or failed.
+   */
+  private async resolveGroupedWorkspaceId(signal: AbortSignal): Promise<string | undefined> {
+    const path = this.sessionGrouping?.workspacePath
+    if (path === undefined) return undefined
+    if (this.groupedWorkspaceId !== undefined) return this.groupedWorkspaceId
+    if (this.groupedWorkspacePending === undefined) {
+      this.groupedWorkspacePending = this.registerGroupedWorkspace(path, signal)
+        .finally(() => { this.groupedWorkspacePending = undefined })
+    }
+    return await this.groupedWorkspacePending
+  }
+
+  /**
+   * Register the configured directory as a Workspace and read back its id.
+   * Grouping is an enhancement, so every failure degrades to "no grouping"
+   * after emitting one diagnostic line — it must never fail the Session.
+   */
+  private async registerGroupedWorkspace(path: string, signal: AbortSignal): Promise<string | undefined> {
+    try {
+      const value = await this.gateway.invoke({
+        namespace: 'workspace',
+        method: 'create',
+        args: { request: { path } },
+        signal,
+      })
+      const workspaceId = workspaceIdOf(value)
+      if (workspaceId === undefined) {
+        throw new TypeError('workspace.create did not return workspace.workspaceId')
+      }
+      this.groupedWorkspaceId = workspaceId
+      return workspaceId
+    } catch (error: unknown) {
+      this.groupedWorkspaceId = undefined
+      const failure = hostFailure(error)
+      this.sessionGrouping?.warn?.(
+        `bridge-dsh: sessionWorkspace ${JSON.stringify(path)} 注册失败（${failure.code}: ${failure.message}），本次会话将不分组`,
+      )
+      return undefined
     }
   }
 
@@ -942,6 +1036,40 @@ function sessionIdOf(payload: unknown): string | undefined {
   return typeof payload.sessionId === 'string' && payload.sessionId.length > 0
     ? payload.sessionId
     : undefined
+}
+
+/** Read `workspace.workspaceId` out of a `workspace.create` value. */
+function workspaceIdOf(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const workspace = value.workspace
+  if (!isRecord(workspace)) return undefined
+  const workspaceId = workspace.workspaceId
+  return typeof workspaceId === 'string' && workspaceId.length > 0 ? workspaceId : undefined
+}
+
+/**
+ * Whether the caller named a location of its own. An explicit `workspaceId` or
+ * `cwd` is the caller's decision and MUST reach dsh untouched. An unrecognized
+ * payload counts as "named" so nothing is injected into a shape we cannot read.
+ */
+function namesOwnLocation(payload: unknown): boolean {
+  if (!isRecord(payload)) return true
+  return payload.workspaceId !== undefined || payload.cwd !== undefined
+}
+
+/**
+ * Copy a `session.create` arg bag with the resolved Workspace injected.
+ * @param args - the original forwarded args.
+ * @param workspaceId - Workspace that should own the new Session.
+ * @returns a new arg bag; the input is left unmodified.
+ */
+function withWorkspaceId(
+  args: Readonly<Record<string, unknown>>,
+  workspaceId: string,
+): Readonly<Record<string, unknown>> {
+  const request = args.request
+  if (!isRecord(request)) return args
+  return { ...args, request: { ...request, workspaceId } }
 }
 
 function badRequest(message: string): HostRpcResult {
