@@ -96,6 +96,18 @@ bash scripts/sync-profile.sh            # copy into the installed plugin dir (au
 # then restart dsh (or reload the plugin) so the new bundle is loaded
 ```
 
+> The copy above replaces the profile's **file**, but the running dsh keeps the module it already imported. A live patch reload re-runs the plugin's `apply()` with the new config while still using the **old module**, so a source change always needs a dsh restart.
+
+### Checks
+
+```sh
+pnpm typecheck                  # tsc --noEmit across all three packages
+pnpm check:grouping             # 16 offline assertions for the sessionWorkspace contract (no dsh needed)
+pnpm check:grouping:e2e         # live end-to-end: session.create over the real bridge, asserted from the Workspace registry
+```
+
+`check:grouping:e2e` needs a running dsh with `sessionWorkspace` configured. It briefly supersedes the Chrome panel's bridge connection (the bridge serves one at a time; the extension reconnects on its own) and creates a real Session on every run.
+
 ## Releases
 
 The two halves are released independently:

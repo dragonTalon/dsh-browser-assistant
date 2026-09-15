@@ -8,6 +8,9 @@
   "type": "module",
   "scripts": {
     "build": "pnpm --filter bridge-dsh run build && pnpm --filter bridge-browser run build",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "check:grouping": "node scripts/check-session-grouping.mjs",
+    "check:grouping:e2e": "node scripts/check-session-grouping-e2e.mjs",
+    "check:selection": "node scripts/check-session-selection.mjs"
   }
 }
