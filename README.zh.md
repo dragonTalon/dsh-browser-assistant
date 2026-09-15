@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser logo">
+  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser 图标:戴单片眼镜的橙色圆形人物">
 </p>
 
 <h1 align="center">dsh 浏览器助手</h1>

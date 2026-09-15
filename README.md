@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser logo">
+  <img src="packages/extension/icons/icon512.png" width="160" height="160" alt="bridge-browser icon: an orange round-faced character wearing a monocle">
 </p>
 
 <h1 align="center">dsh Browser Assistant</h1>
