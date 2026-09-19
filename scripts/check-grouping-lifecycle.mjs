@@ -23,7 +23,6 @@ function resolveEsbuild() {
     process.env.ESBUILD,
     join(repoRoot, 'packages/extension/node_modules/.bin/esbuild'),
     join(repoRoot, 'packages/bridge-dsh/node_modules/.bin/esbuild'),
-    '/Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild',
   ].filter((candidate) => typeof candidate === 'string' && candidate !== '')
   const found = candidates.find((candidate) => existsSync(candidate))
   if (found === undefined) {

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-browser/protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shared zero-dependency wire protocol between the dsh bridge plugin and the browser extension",
   "license": "MIT",
   "private": true,

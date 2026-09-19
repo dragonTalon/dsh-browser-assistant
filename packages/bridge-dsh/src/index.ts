@@ -27,10 +27,14 @@ import { registerBrowserTools } from './tools.ts'
 import {
   BRIDGE_CONFIG_PATH,
   BRIDGE_PATH,
+  BRIDGE_SESSION_PERMISSION_EVENT,
   DEFAULT_SNAPSHOT_MAX_CHARS,
   MIN_SNAPSHOT_MAX_CHARS,
 } from '@dsh-browser/protocol'
 import { resolveToken } from './token.ts'
+import { createPermissionServices, type PermissionServices } from './permission.ts'
+import { watchPermissionTiers } from './permission-watch.ts'
+import { registerTierNarration, type SystemPromptLike } from './tier-narration.ts'
 import {
   createRemoteHostApi,
   type HostConnectionLike,
@@ -142,6 +146,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ctx.logger.warn('bridge-dsh: llm/agentDefaultModel 服务未探测到，model.catalog 将返回 llm-unavailable')
   }
 
+  // Optional permission tiers: probed for the same reason. Without the
+  // projection registry the bridge cannot even learn the deployment's preset
+  // table, so it reports no tier capability — calls carry no policy and the
+  // extension keeps its pre-tier, always-confirm behavior. The registry is NOT
+  // the tier's source of truth (the session's own knob events are); it supplies
+  // the preset names and the cross-check.
+  const permissionServices = createPermissionServices(ctx, (message) => { ctx.logger.warn(message) })
+  if (permissionServices === undefined) {
+    ctx.logger.warn('bridge-dsh: sessionProjections 服务未探测到，权限档位将整体降级为无档位')
+  }
+
   const sessionGrouping = resolved.sessionWorkspace === undefined
     ? undefined
     : {
@@ -149,9 +164,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         // Grouping is an enhancement: a misconfigured directory must stay
         // diagnosable without ever failing Session creation.
         warn: (message: string) => { ctx.logger.warn(message) },
+        // The resolution trace answers "why did this Session land ungrouped?"
+        // without a debugger: enabled grouping says so once at mount, and every
+        // create reports reuse, registration, or a declined/aborted caller.
+        trace: (message: string) => { ctx.logger.info(message) },
       }
+  if (sessionGrouping !== undefined) {
+    ctx.logger.info(
+      `bridge-dsh: 会话分组已启用，扩展创建的会话将归入工作区 ${resolved.sessionWorkspace}`,
+    )
+  }
 
-  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection, modelServices, sessionGrouping))
+  mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(
+    gateway,
+    connection,
+    modelServices,
+    sessionGrouping,
+    permissionServices,
+  ), permissionServices)
 }
 
 function mountBridge(
@@ -159,6 +189,7 @@ function mountBridge(
   resolved: ResolvedConfig,
   tokenRes: Awaited<ReturnType<typeof resolveToken>>,
   api: ReturnType<typeof createRemoteHostApi>,
+  permissionServices: PermissionServices | undefined,
 ): void {
   const server = new BridgeServer({
     token: tokenRes.token,
@@ -195,9 +226,36 @@ function mountBridge(
       toolTimeoutMs: resolved.toolTimeoutMs,
       snapshotMaxChars: resolved.snapshotMaxChars,
       maxInteractiveItems: resolved.maxInteractiveItems,
+      ...(permissionServices === undefined ? {} : { permissions: permissionServices }),
     })
     return () => { for (const dispose of disposers.values()) dispose() }
   }, 'bridge-dsh: browser tools')
+
+  // Tier changes are pushed and acted on only when a tier actually moves: the
+  // watcher compares values, so a refused or no-op switch request has no effect.
+  // It rides the session append feed — the very log the tier is folded from —
+  // so the announced tier and the enforced tier come from one computation.
+  if (permissionServices !== undefined) {
+    const watcher = watchPermissionTiers({
+      permissions: permissionServices,
+      announce: (sessionId, value) => {
+        server.publishEvent(BRIDGE_SESSION_PERMISSION_EVENT, { sessionId, value })
+      },
+      withdraw: (sessionId) => server.cancelPendingForSession(sessionId),
+      log: (message) => { ctx.logger.warn(message) },
+    })
+    ctx.effect(
+      () => ctx.on('session/event', (session: unknown, event: unknown) => { watcher(session, event) }),
+      'bridge-dsh: permission tier watch',
+    )
+    // The host service is probed, never injected: without it the deployment
+    // gets no narration, and nothing else about the bridge changes.
+    registerTierNarration({
+      systemPrompt: ctx.get('systemPrompt') as SystemPromptLike | undefined,
+      permissions: permissionServices,
+      effect: (register, name) => { ctx.effect(register, name) },
+    })
+  }
 
   ctx.logger.info(
     tokenRes.generated

@@ -1,7 +1,7 @@
 /**
  * Ambient module declarations for the two build-aliased runtime deps the panel
- * uses (marked + dompurify). Their real files are pulled in by `build.sh`
- * `--alias` flags pointing at the local deepseek-harness `.pnpm` store, so no
+ * uses (marked + dompurify). Their real files are workspace devDependencies,
+ * pulled in by `build.sh` `--alias` flags pointing at `./node_modules/...`; no
  * `@types` packages exist. Declare the minimal surface we consume.
  *
  * @module

@@ -104,18 +104,21 @@ bash scripts/sync-profile.sh            # 拷贝进已安装的插件目录（�
 ### 校验脚本
 
 ```sh
-pnpm typecheck                  # 三个包的 tsc --noEmit
+pnpm test                       # 发布门禁：typecheck + 全部离线校验（scripts/run-tests.mjs）
+pnpm test:e2e                   # 两条实机 e2e 一条命令跑完；需要运行中的 dsh
 pnpm check:slash                # 28 项离线断言：斜杠词汇 + 目录生命周期
 pnpm check:ordered-rpc          # 7 项断言：以真实 WebSocket 驱动真实 BridgeServer,
                                 #   验证保序 RPC 的有界等待释放队列槽位而非挂死会话
 pnpm check:grouping-lifecycle   # 6 项断言：连接替换后工作区分组仍能注册
 pnpm check:selection            # 32 项离线断言：会话选择（缓冲、seq、历史重放）
-pnpm check:grouping             # 16 项离线断言：sessionWorkspace 契约
+pnpm check:grouping             # 24 项离线断言：sessionWorkspace 契约 + 诊断轨迹 + 插件接线
+pnpm check:permission           # 43 项离线断言：权限档位规则 + spec 场景覆盖分类
+pnpm check:grouping:status      # 只读排查（不连 dsh）：注册表成员 vs 目录下真实会话文件
 pnpm check:selection:e2e        # 实机端到端：对运行中的 dsh 验证会话选择
 pnpm check:grouping:e2e         # 实机端到端：经真实桥发起 session.create,并从 Workspace 注册表断言
 ```
 
-五个离线脚本不需要 dsh、不需要 Chrome、不需要网络——它们用 esbuild 打包**真实源码**后在 Node 里断言 spec 场景。两个 `:e2e` 脚本需要运行中的 dsh（`check:grouping:e2e` 还需配置 `sessionWorkspace`）；它们会短暂顶替 Chrome 面板的桥连接（桥同一时刻只服务一个，扩展会自行重连），且每次运行都会创建一个真实会话。
+离线脚本不需要 dsh、不需要 Chrome、不需要网络——它们用 esbuild 打包**真实源码**后在 Node 里断言 spec 场景；`pnpm test` 经 `scripts/run-tests.mjs` 一口气跑完它们（外加 typecheck），是每次发布必须通过的门禁。桥接自身的 typecheck 需要 dsh 宿主框架类型（`@deepseek-ai/*`），它们随 dsh 安装在本机：首次 checkout 后跑一次 `bash scripts/link-dsh-types.sh` 把类型软链进包内。`check:grouping:status` 只读磁盘上的注册表与会话目录，用来回答「会话为什么没进分组」；两个 `:e2e` 脚本需要运行中的 dsh（`check:grouping:e2e` 还需配置 `sessionWorkspace`）；它们会短暂顶替 Chrome 面板的桥连接（桥同一时刻只服务一个，扩展会自行重连），且每次运行都会创建一个真实会话。
 
 ## 发布版本
 
@@ -123,13 +126,22 @@ pnpm check:grouping:e2e         # 实机端到端：经真实桥发起 session.c
 
 | 产物 | 包名 | 版本 | Git tag |
 |---|---|---|---|
-| dsh bridge 插件 | `bridge-dsh` | `0.2.0` | `bridge-dsh@0.2.0` |
-| Chrome 扩展 | `bridge-browser` | `0.2.0` | `bridge-browser@0.2.0` |
+| dsh bridge 插件 | `bridge-dsh` | `0.3.0` | `bridge-dsh@0.3.0` |
+| Chrome 扩展 | `bridge-browser` | `0.3.0` | `bridge-browser@0.3.0` |
+
+打 tag 必须走发布门禁脚本——离线套件不通过就拒绝打 tag：
+
+```sh
+bash scripts/tag-release.sh bridge-dsh 0.3.0               # typecheck + pnpm test 通过后才打 tag 并推送
+bash scripts/tag-release.sh bridge-browser 0.3.0 --e2e     # 另加实机 e2e（需要运行中的 dsh）
+```
+
+脚本先核对版本号与对应包的 `package.json`（扩展还要核对 `manifest.json`）一致，再跑门禁，全部通过才创建并推送 tag；任何一步失败都不会产生 tag。推送后的 tag 触发下方流水线，流水线在构建前会**再跑一遍同一套离线套件**。
 
 桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.2.0.tgz`）
-- `bridge-browser-0.2.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.3.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.3.0.tgz`）
+- `bridge-browser-0.3.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 每次发布的说明都是中英双语，由对应包的变更日志生成，因此不会与真正发布的内容脱节：[`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md)。
 

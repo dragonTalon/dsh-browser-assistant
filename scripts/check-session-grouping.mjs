@@ -15,7 +15,7 @@
  * current source rather than a stale `lib/` artifact.
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -28,7 +28,6 @@ function resolveEsbuild() {
   const candidates = [
     process.env.ESBUILD,
     join(repoRoot, 'packages/bridge-dsh/node_modules/.bin/esbuild'),
-    '/Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild',
   ].filter((candidate) => typeof candidate === 'string' && candidate !== '')
   const found = candidates.find((candidate) => existsSync(candidate))
   if (found === undefined) {
@@ -221,6 +220,57 @@ const coded = (code, message) => Object.assign(new Error(message), { code })
   )
 }
 
+// --- 瞬时失败: 同一次 session.create 内重试并成功分组 ------------------------
+{
+  let attempt = 0
+  const { calls, gateway } = makeGateway({
+    onCreate: () => {
+      attempt += 1
+      if (attempt === 1) throw coded('gateway/service-unavailable', 'gateway is still starting')
+      return OK_CREATE
+    },
+  })
+  const traces = []
+  const warnings = []
+  const api = createRemoteHostApi(gateway, connection, undefined, {
+    workspacePath: WS_PATH,
+    warn: (m) => warnings.push(m),
+    trace: (m) => traces.push(m),
+    registrationRetryDelayMs: 0,
+  })
+  const result = await api.call(call('session.create', {}))
+  const sc = sessionCreates(calls)
+  check(
+    '瞬时失败: 同一次调用内重试注册，会话直接带上 workspaceId',
+    result.ok === true && workspaceCreates(calls).length === 2 &&
+      sc.length === 1 && sc[0].args.request.workspaceId === WS_ID && warnings.length === 0,
+    JSON.stringify({ result, creates: workspaceCreates(calls).length, warnings }),
+  )
+  check(
+    '瞬时失败: 轨迹留下重试那一行',
+    traces.some((m) => m.includes('重试')),
+    JSON.stringify(traces),
+  )
+}
+
+// --- 永久失败: 不浪费调用方的会话时间做无意义重试 ---------------------------
+{
+  const { calls, gateway } = makeGateway({
+    onCreate: () => { throw coded('workspace/invalid-path', 'path does not exist') },
+  })
+  const api = createRemoteHostApi(gateway, connection, undefined, {
+    workspacePath: WS_PATH,
+    warn: () => {},
+    registrationRetryDelayMs: 0,
+  })
+  const result = await api.call(call('session.create', {}))
+  check(
+    '永久失败: 只尝试一次（重复同一失败不可能改变结果）',
+    result.ok === true && workspaceCreates(calls).length === 1,
+    JSON.stringify({ result, creates: workspaceCreates(calls).length }),
+  )
+}
+
 // --- 返回值缺 workspaceId 视为解析失败 --------------------------------------
 {
   const { calls, gateway } = makeGateway({ onCreate: () => ({ created: true }) })
@@ -290,6 +340,73 @@ const coded = (code, message) => Object.assign(new Error(message), { code })
     workspaceCreates(calls).length === 0 && pc.length === 1 && !hasWorkspaceId(pc[0].args.request),
     JSON.stringify(calls.map((c) => c.args)),
   )
+}
+
+// --- 诊断轨迹: 分组为何发生 / 为何没发生都能从日志读出来 --------------------
+{
+  const traces = []
+  const { gateway } = makeGateway()
+  const api = createRemoteHostApi(gateway, connection, undefined, {
+    workspacePath: WS_PATH,
+    trace: (message) => { traces.push(message) },
+  })
+  await api.call(call('session.create', {}))
+  await api.call(call('session.create', {}))
+  await api.call(call('session.create', { cwd: '/tmp/elsewhere' }))
+  check(
+    '轨迹: 首次创建报告发起注册并给出解析出的 workspaceId',
+    traces.some((m) => m.includes(WS_PATH) && m.includes('注册')) && traces.some((m) => m.includes(WS_ID)),
+    JSON.stringify(traces),
+  )
+  check(
+    '轨迹: 第二次创建只复用缓存身份，不再发起注册',
+    traces.filter((m) => m.includes(WS_PATH) && m.includes('注册')).length === 1,
+    JSON.stringify(traces),
+  )
+  check(
+    '轨迹: 显式 cwd 的创建报告「按调用方位置原样转发」',
+    traces.some((m) => m.includes('原样转发')),
+    JSON.stringify(traces),
+  )
+}
+
+// --- 诊断轨迹: 注册失败既留 warn 也留「曾发起注册」的轨迹 -------------------
+{
+  const warnings = []
+  const traces = []
+  const { gateway } = makeGateway({ onCreate: () => { throw coded('workspace/invalid-path', 'nope') } })
+  const api = createRemoteHostApi(gateway, connection, undefined, {
+    workspacePath: WS_PATH,
+    warn: (message) => { warnings.push(message) },
+    trace: (message) => { traces.push(message) },
+  })
+  await api.call(call('session.create', {}))
+  check(
+    '轨迹: 注册失败留下警告与发起注册的轨迹各一条',
+    warnings.length === 1 && warnings[0].includes('注册失败') &&
+      traces.filter((m) => m.includes('注册')).length === 1,
+    JSON.stringify({ warnings, traces }),
+  )
+}
+
+// --- 插件侧接线: 轨迹必须真的接到 dsh 日志 ----------------------------------
+// The adapter's `trace` sink is only useful if the plugin passes one; that
+// wiring lives in index.ts, which this bundle does not cover. Assert it on the
+// built artifact so a future edit cannot silently drop the trace back to
+// "grouping is invisible", which is what made this diagnosable only by
+// forensics in the first place.
+{
+  const builtLib = join(repoRoot, 'packages/bridge-dsh', 'lib', 'index.js')
+  if (!existsSync(builtLib)) {
+    console.log('SKIP  插件接线: 未构建的 lib/index.js\n        run: bash packages/bridge-dsh/build.sh')
+  } else {
+    const lib = readFileSync(builtLib, 'utf8')
+    check(
+      '插件接线: 构建产物把 trace 接到 logger，并在挂载时报告分组已启用',
+      lib.includes('\\u4F1A\\u8BDD\\u5206\\u7EC4\\u5DF2\\u542F\\u7528') && lib.includes('trace:'),
+      'index.ts must pass SessionGroupingOptions.trace through to ctx.logger',
+    )
+  }
 }
 
 rmSync(bundlePath, { force: true })

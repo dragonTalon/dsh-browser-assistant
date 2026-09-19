@@ -35,9 +35,9 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 | `packages/bridge-dsh` | dsh 进程 | 挂路由、注册工具、把浏览器能力接进模型 | 是 |
 | `packages/extension` | Chrome | 执行浏览器操作、呈现对话、用户审批 | 是 |
 
-**协议是唯一真相源**：`protocol.ts` 被两端 import 同一份文件，帧结构不可能漂移；`isServerFrame`/`isClientFrame` 类型守卫把收发方向在类型层面分开。帧清单、常量与 RPC 方法族见 [protocol.md](protocol.md)。
+**协议是唯一真相源**：`protocol.ts` 被两端 import 同一份文件，帧结构不可能漂移；`isServerFrame`/`isClientFrame` 类型守卫把收发方向在类型层面分开。**工具语义的真相源同样是协议包**：`browser-tools.ts` 注册表唯一声明 12 个工具的名称与动作类别（read/observe/mutate/navigate）及 delta/导航标志，桥接档位闸门与扩展审批/快照策略全部从它派生，未注册工具名在桥接层以 `unknown-tool` 拒绝且零帧（漂移防护：`pnpm check:tool-registry`）。帧清单、常量与 RPC 方法族见 [protocol.md](protocol.md)。
 
-**代码组织与类型安全**：扩展拆为 `background/`（控制中心）、`content/`（唯一接触 DOM）、`panel/`（12 个单一职责模块上方的薄组装根）、以及跨界面复用的共享 `common/`（`tools/` + `ui/`）。三个包均用 `tsc` 做类型检查——扩展自带本地 `chrome.d.ts` + `vendor.d.ts`（离线环境无 `@types/chrome`）。
+**代码组织与类型安全**：扩展拆为 `background/`（控制中心）、`content/`（唯一接触 DOM）、`panel/`（12 个单一职责模块上方的薄组装根）、以及跨界面复用的共享 `common/`（`tools/` + `ui/`）。共享词汇下沉：`background/types.ts` 收拢工具调用类型，`BridgeState`/`RegionElement` 等在 `common/`，依赖方向单向化（无 panel→background、background→content 类型依赖、无模块环）。三个包均用 `tsc` 做类型检查——扩展自带本地 `chrome.d.ts` + `vendor.d.ts`（离线环境无 `@types/chrome`）。
 
 ## 端到端数据流
 
@@ -45,15 +45,16 @@ dsh-browser-assistant 让 [DeepSeek Harness](https://github.com/deepseek-ai/deep
 2. **握手**：`WebSocket` 连接后首帧必须是 `hello{token,caps}`（5s 超时），服务端校验 token → 回 `hello.ok`（协商快照预算）。
 3. **会话**：面板 `session.create` / `session.prompt` / 斜杠词汇的 `commands.list`、`commands.execute`、`skills.list` → `rpc` 帧 → 桥转发给 Typert Gateway → dsh 执行 → `rpc.result`。
 4. **事件回传**：dsh 的会话事件（`user/message`、`assistant/message`、`turn/end`、`question/requested`、命令生命周期的 `command/run`/`command/done`）经 `event` 帧流式推给面板渲染。
-5. **浏览器操作**：模型调 `browser_*` → 桥发 `tool.call` → 扩展后台路由到 content script 执行 → `tool.result` 回给模型。
-6. **框选截图**：面板箭头按钮 → 后台 → content script 拖拽框选 overlay → 后台用 `captureVisibleTab` 按选区裁剪 → 面板预览 → `session.prompt` 携带选区图片块 + 元素清单（dsh 核心做图片入库并门控到视觉模型）。
+5. **浏览器操作**：模型调 `browser_*` → **桥接侧档位闸门**（折叠 `exec.agent.session` 自身的旋钮事件 `permission/preset` + `sandbox/mode` + `approval/policy` 求解会话档位：`仅可查看` 直接拒绝改页面/开网站且不发帧，`工作区内修改` 放行并下发「需人工审批」，`完全权限` 放行并下发「直接执行」；档位求解失败则以稳定错误码显式失败，**不回退到任何档位**）→ 桥发 `tool.call{policy}` → 扩展后台按帧内策略决定「弹确认框 / 直接执行」并路由到 content script → `tool.result` 回给模型。`permissions` 投影只用于获知部署的预设表，以及与折叠结果交叉核对（分歧时以更严一方判定并留痕）。
+6. **档位变更**：面板或 dsh 界面改档位 → 桥经 `commands.execute` 执行 dsh 的 `/permission <preset>` → 会话旋钮事件追加 → 桥接在档位**实际变化**时推 `session/permission` 事件给面板；档位实际下降时桥接用 `tool.cancel` 撤回该会话在途的浏览器调用（含正等待确认的那些）。切换是否生效以投影回流等于目标档位为唯一判据（投影仍做显示与切换确认，只是不参与每次调用的闸门判定）。
+7. **框选截图**：面板箭头按钮 → 后台 → content script 拖拽框选 overlay → 后台用 `captureVisibleTab` 按选区裁剪 → 面板预览 → `session.prompt` 携带选区图片块 + 元素清单（dsh 核心做图片入库并门控到视觉模型）。
 
 ## 关键设计决策
 
 | 决策 | 做法 | 为什么 |
 |---|---|---|
 | **文本优先 + 用户框选截图** | 模型工具保持纯文本；面板新增用户发起的拖拽框选，裁剪截图并提取选区内 DOM 元素进 prompt | 工具侧文本省 token、可 diff；视觉是显式、用户确认的，且只投递给视觉模型 |
-| **窄接口隔离 dsh 版本** | 桥只依赖 `BrowserHostApi`（call/events/respond）三个方法 | dsh 0.1.1(ApiProxy) / 0.1.2(0.1.3)(Typert) 切换只换适配层 |
+| **窄接口隔离 dsh 版本** | 桥只依赖 `BrowserHostApi`（call/events/respond）三个方法；业务逻辑经 `host-streams.ts` 传输原语与宿主解耦，`remote-host-api.ts` 只做形状翻译 | dsh 0.1.1(ApiProxy) / 0.1.2(0.1.3)(Typert) 切换只换适配层，事件代/分组等业务模块零改动 |
 | **单受控标签页** | 工具绑定一个标签页，首次调用时绑定活动页 | 不让模型静默切换/偷看其它标签页 |
 | **fail-closed 审批** | 读默认 auto；写操作一律审批，无面板即超时拒绝 | 安全边界在扩展后台，不赌模型自觉 |
 | **稳定元素编号** | WeakMap 一次性分配 id + `data-dsh-el` 标记 | 跨快照可寻址，避免重渲染后点错 |

@@ -1,7 +1,7 @@
 {
   "name": "dsh-bs",
-  "version": "0.2.0",
-  "description": "dsh-bs (browser sidekick): dsh 的浏览器副手 — bridge 插件 + Chrome MV3 扩展,纯文本快照读取/操作当前标签页,写操作需人工确认",
+  "version": "0.3.0",
+  "description": "dsh-bs (browser sidekick): dsh 的浏览器副手 — bridge 插件 + Chrome MV3 扩展,纯文本快照读取/操作当前标签页,浏览器写操作按会话权限档位判定",
   "license": "MIT",
   "private": true,
   "packageManager": "pnpm@11.23.0",
@@ -9,12 +9,19 @@
   "scripts": {
     "build": "pnpm --filter bridge-dsh run build && pnpm --filter bridge-browser run build",
     "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm typecheck && node scripts/run-tests.mjs",
+    "test:e2e": "node scripts/run-tests.mjs --e2e",
     "check:grouping": "node scripts/check-session-grouping.mjs",
     "check:grouping:e2e": "node scripts/check-session-grouping-e2e.mjs",
+    "check:grouping:status": "node scripts/check-grouping-status.mjs",
     "check:selection": "node scripts/check-session-selection.mjs",
     "check:selection:e2e": "node scripts/check-session-selection-e2e.mjs",
     "check:ordered-rpc": "node scripts/check-ordered-rpc.mjs",
     "check:grouping-lifecycle": "node scripts/check-grouping-lifecycle.mjs",
-    "check:slash": "node scripts/check-slash-command.mjs"
+    "check:slash": "node scripts/check-slash-command.mjs",
+    "check:permission": "node scripts/check-permission-tiers.mjs",
+    "check:tool-registry": "node scripts/check-tool-registry.mjs",
+    "check:adapter-seam": "node scripts/check-adapter-seam.mjs",
+    "tier:switch": "node scripts/switch-tier.mjs"
   }
 }

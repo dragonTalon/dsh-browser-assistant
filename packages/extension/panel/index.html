@@ -46,7 +46,11 @@
     }
 
     /* 模型选择器（输入区内丸状控件，与 dsh GUI 的位置/观感对齐） */
-    #modelWrap { flex: 0 1 auto; display: flex; align-items: center; gap: 4px; min-width: 0; max-width: 260px; }
+    /* 行内最右控件：`margin-left:auto` 把它推到行尾，左侧的档位选择器因此留在左组 */
+    #modelWrap {
+      flex: 0 1 auto; display: flex; align-items: center; gap: 4px;
+      min-width: 0; max-width: 260px; margin-left: auto;
+    }
     #modelSelect {
       min-width: 0; max-width: 100%; font: inherit; font-size: 11px;
       padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(128,128,128,.35);
@@ -56,6 +60,32 @@
     #modelSelect:disabled { opacity: .55; cursor: default; max-width: 130px; }
     #modelSelect optgroup, #modelSelect option { color: #111; background: #fff; font-size: 13px; }
     @media (prefers-color-scheme: dark) { #modelSelect optgroup, #modelSelect option { color: #eee; background: #262626; } }
+
+    /* 权限档位选择器：与模型选择器同款丸状控件，紧接框选按钮，窄宽度下先收缩 */
+    #permissionWrap {
+      flex: 0 1 auto; display: flex; align-items: center; gap: 3px;
+      min-width: 0; max-width: 150px;
+    }
+    #permissionLock { flex: none; font-size: 10px; line-height: 1; opacity: .75; }
+    #permissionSelect {
+      min-width: 0; max-width: 100%; font: inherit; font-size: 11px;
+      padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(128,128,128,.35);
+      background: transparent; color: inherit; cursor: pointer;
+      text-overflow: ellipsis;
+    }
+    #permissionWrap:hover #permissionSelect:not(:disabled) { border-color: rgba(128,128,128,.65); }
+    #permissionSelect:disabled { opacity: .55; cursor: default; max-width: 96px; }
+    /* 档位语义着色：收紧=灰、可操作=蓝、完全权限=红 */
+    #permissionSelect.tier-read-only { border-color: rgba(128,128,128,.5); }
+    #permissionSelect.tier-workspace-write { border-color: rgba(46,134,222,.55); color: #2e86de; }
+    #permissionSelect.tier-danger-full-access { border-color: rgba(231,76,60,.6); color: #c0392b; }
+    @media (prefers-color-scheme: dark) {
+      #permissionSelect.tier-workspace-write { color: #6ab0f3; }
+      #permissionSelect.tier-danger-full-access { color: #ff8b7d; }
+    }
+    #permissionSelect option { color: #111; background: #fff; font-size: 13px; }
+    @media (prefers-color-scheme: dark) { #permissionSelect option { color: #eee; background: #262626; } }
+    #permissionNote { font-size: 11px; color: #8a8a8a; padding: 0 2px 4px; }
     .capBadge {
       flex: none; font-size: 10px; padding: 1px 7px; border-radius: 999px;
       border: 1px solid transparent; white-space: nowrap;
@@ -208,6 +238,11 @@
     #settingsEffective.warn { color: #b9770e; }
     #settingsHint { font-size: 11px; color: #8a8a8a; line-height: 1.4; }
     #settingsHint code { font-family: ui-monospace, Menlo, monospace; background: rgba(128,128,128,.15); padding: 0 3px; border-radius: 3px; }
+    #settingsSharingHint { font-size: 11px; color: #8a8a8a; line-height: 1.4; }
+    #settingsSharing {
+      width: 100%; padding: 6px 8px; border-radius: 6px; font: inherit; font-size: 12px;
+      border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit;
+    }
     #settingsResult { display: none; font-size: 11px; line-height: 1.5; padding: 7px 9px; border-radius: 6px; margin-bottom: 10px; word-break: break-word; }
     #settingsResult.show { display: block; }
     #settingsResult.pending { background: rgba(46,134,222,.1); color: #2e86de; }
@@ -217,6 +252,30 @@
       #settingsResult.ok { color: #7ce0a6; }
       #settingsResult.error { color: #ff8b7d; }
     }
+
+    /* 完全权限风险确认门（与 dsh 自身 Full access 确认同形态，不记住选择） */
+    #fullAccessOverlay {
+      display: none; position: fixed; inset: 0; z-index: 30;
+      background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+      padding: 20px 12px;
+    }
+    #fullAccessOverlay.open { display: flex; }
+    #fullAccessDialog {
+      width: 100%; max-width: 380px; max-height: 100%; overflow-y: auto;
+      background: #fff; color: #111; border-radius: 10px;
+      border: 1px solid rgba(231,76,60,.5); box-shadow: 0 12px 32px rgba(0,0,0,.4);
+      padding: 14px;
+    }
+    @media (prefers-color-scheme: dark) { #fullAccessDialog { background: #262626; color: #eee; } }
+    #fullAccessDialog h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #c0392b; }
+    #fullAccessDialog .risk { margin: 0 0 8px; font-size: 12px; line-height: 1.5; }
+    #fullAccessDialog .risk.muted { color: #8a8a8a; }
+    #fullAccessAckLabel {
+      display: flex; align-items: flex-start; gap: 6px;
+      font-size: 12px; line-height: 1.4; margin: 12px 0;
+    }
+    #fullAccessAckLabel input { margin: 2px 0 0; flex: none; }
+    #fullAccessActions { display: flex; gap: 8px; justify-content: flex-end; }
     #settingsActions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     #settingsActions .spacer { flex: 1; }
   </style>
@@ -261,6 +320,17 @@
           远端 dsh 必须填 token。本机可执行 <code>cat ~/.dsh/ext-bridge-token</code> 获取（粘贴时的换行会自动忽略）。
         </div>
       </div>
+      <div class="field">
+        <label for="settingsSharing">页面分享</label>
+        <select id="settingsSharing">
+          <option value="auto">自动：读取页面直接放行</option>
+          <option value="ask">每次询问：每次读取都先确认</option>
+          <option value="off">关闭：一律拒绝读取页面内容</option>
+        </select>
+        <div id="settingsSharingHint">
+          只控制页面内容能否被读取并送给模型，与「权限」档位相互独立；档位管的是智能体能做什么，这里管的是页面数据能不能离开页面。
+        </div>
+      </div>
       <div id="settingsResult"></div>
       <div id="settingsActions">
         <button id="settingsTest">测试连接</button>
@@ -273,6 +343,26 @@
   </div>
   <div id="logPanel"></div>
   <div id="log"></div>
+  <div id="fullAccessOverlay" role="dialog" aria-modal="true" aria-labelledby="fullAccessTitle">
+    <div id="fullAccessDialog">
+      <h2 id="fullAccessTitle">确认启用完全权限？</h2>
+      <p class="risk">
+        启用后，浏览器操作（点击、输入、按键、导航、打开新标签页）将<strong>不再需要人工确认</strong>，直接执行。
+      </p>
+      <p class="risk">
+        该档位同时放开本会话在 dsh 侧的文件与命令权限——它是整个会话的权限，不只是浏览器这一部分。
+      </p>
+      <p class="risk muted">仅建议在你信任当前任务时使用。</p>
+      <label id="fullAccessAckLabel">
+        <input id="fullAccessAck" type="checkbox">
+        <span>我已了解风险，并愿意继续</span>
+      </label>
+      <div id="fullAccessActions">
+        <button id="fullAccessCancel">取消</button>
+        <button id="fullAccessConfirm" class="danger" disabled>启用完全权限</button>
+      </div>
+    </div>
+  </div>
   <div id="approval" class="panelBlock">
     <div class="q" id="approvalText"></div>
     <div class="btns">
@@ -302,6 +392,10 @@
     </div>
     <div id="composerBar">
       <button id="regionBtn" title="框选页面区域截图">⌖</button>
+      <div id="permissionWrap">
+        <span id="permissionLock" aria-hidden="true">🔒</span>
+        <select id="permissionSelect" disabled title="会话权限档位"></select>
+      </div>
       <div id="modelWrap">
         <select id="modelSelect" disabled title="选择会话模型；选择会成为 dsh 默认模型"></select>
         <span id="modelCap" class="capBadge none"></span>

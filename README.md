@@ -104,18 +104,21 @@ bash scripts/sync-profile.sh            # copy into the installed plugin dir (au
 ### Checks
 
 ```sh
-pnpm typecheck                  # tsc --noEmit across all three packages
+pnpm test                       # the release gate: typecheck + ALL offline checks (scripts/run-tests.mjs)
+pnpm test:e2e                   # the two live checks in one command; needs a running dsh
 pnpm check:slash                # 28 offline assertions for the slash vocabulary + catalog lifecycle
 pnpm check:ordered-rpc          # 7 assertions driving a real BridgeServer over a real WebSocket:
                                 #   the ordered-RPC bound releases the queue slot instead of hanging the session
 pnpm check:grouping-lifecycle   # 6 assertions: workspace registration survives a connection replacement
 pnpm check:selection            # 32 offline assertions for the session picker (buffers, seq, history replay)
-pnpm check:grouping             # 16 offline assertions for the sessionWorkspace contract
+pnpm check:grouping             # 24 offline assertions for the sessionWorkspace contract + its diagnostic trace + plugin wiring
+pnpm check:permission           # 43 offline assertions for the permission-tier rules + spec-scenario coverage classification
+pnpm check:grouping:status      # read-only triage (no dsh needed): registry membership vs the directory's real Session files
 pnpm check:selection:e2e        # live end-to-end: session selection against a running dsh
 pnpm check:grouping:e2e         # live end-to-end: session.create over the real bridge, asserted from the Workspace registry
 ```
 
-The five offline checks need no dsh, no Chrome and no network — they bundle the real sources with esbuild and assert the spec scenarios in Node. The two `:e2e` checks need a running dsh (`check:grouping:e2e` additionally needs `sessionWorkspace` configured); they briefly supersede the Chrome panel's bridge connection (the bridge serves one at a time; the extension reconnects on its own) and create a real Session on every run.
+The offline checks need no dsh, no Chrome and no network — they bundle the real sources with esbuild and assert the spec scenarios in Node; `pnpm test` runs them all (plus typecheck) through `scripts/run-tests.mjs`, and is the gate every release must pass. The bridge's own typecheck needs the dsh host framework's types (`@deepseek-ai/*`), which live in a local dsh installation: after checkout run `bash scripts/link-dsh-types.sh` once to link them into the package. `check:grouping:status` reads only the on-disk registry and Session store, and answers "why did this conversation not land in the group?"; the two `:e2e` checks need a running dsh (`check:grouping:e2e` additionally needs `sessionWorkspace` configured); they briefly supersede the Chrome panel's bridge connection (the bridge serves one at a time; the extension reconnects on its own) and create a real Session on every run.
 
 ## Releases
 
@@ -123,13 +126,22 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `bridge-dsh` | `0.2.0` | `bridge-dsh@0.2.0` |
-| Chrome extension | `bridge-browser` | `0.2.0` | `bridge-browser@0.2.0` |
+| dsh bridge plugin | `bridge-dsh` | `0.3.0` | `bridge-dsh@0.3.0` |
+| Chrome extension | `bridge-browser` | `0.3.0` | `bridge-browser@0.3.0` |
+
+Tagging is done through the release gate, which refuses to tag unless the full offline suite passes:
+
+```sh
+bash scripts/tag-release.sh bridge-dsh 0.3.0      # typecheck + pnpm test, then tags and pushes
+bash scripts/tag-release.sh bridge-browser 0.3.0 --e2e   # additionally runs the live checks (needs a running dsh)
+```
+
+The script verifies the version against the package's `package.json` (and the extension's `manifest.json`), runs the gate, then creates and pushes the tag; any failure aborts without a tag. The pushed tag triggers the pipeline below, which runs the same offline suite once more before building.
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.2.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.2.0.tgz` is also attached to its release)
-- `bridge-browser-0.2.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.3.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.3.0.tgz` is also attached to its release)
+- `bridge-browser-0.3.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 Every release description is bilingual and is generated from that package's changelog, so the notes can never drift from what shipped: [`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md).
 

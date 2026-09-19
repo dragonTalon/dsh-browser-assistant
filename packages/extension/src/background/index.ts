@@ -2,14 +2,20 @@
  * Background service worker: owns the bridge connection, the gateway RPC
  * client, controlled-tab tool dispatch, and the panel port service.
  *
- * MVP scope: a single controlled tab (bound to the active tab on first use),
- * reads auto-allowed (`sharePageContent: 'auto'`), state-changing actions
- * fail closed behind a user approval in the side panel.
+ * MVP scope: a single controlled tab (bound to the active tab on first use).
+ *
+ * Two independent axes govern a browser tool call. The CAPABILITY axis is the
+ * session permission tier, solved by the bridge and delivered per call as
+ * `tool.call.policy`: `auto` runs the action directly, `ask` raises a panel
+ * approval, and the bridge refuses a whole action class outright under the
+ * read-only tier. The PRIVACY axis is `sharePageContent`, a local preference
+ * that decides whether page content may leave the page at all.
  *
  * Panel port protocol (chrome.runtime.connect, name "dsh-panel"):
  *   panel → bg: { type: 'rpc', id, method, payload }
  *   panel → bg: { type: 'respond', id, rpcId, result }
  *   panel → bg: { type: 'settings', settings }
+ *   panel → bg: { type: 'page-sharing.set', value }
  *   panel → bg: { type: 'bridge.test', id, host, token }
  *   panel → bg: { type: 'approval.response', id, decision }
  *   panel → bg: { type: 'request-status' }
@@ -41,17 +47,19 @@ import {
 import type { ServerFrame } from '@dsh-browser/protocol'
 import { BridgeClient, HELLO_ACK_TIMEOUT_MS, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
-import { dispatchOpenTab, dispatchToolCall, type ToolAnswer, type ToolCall } from './tools.ts'
+import { dispatchOpenTab, dispatchToolCall } from './tools.ts'
+import type { ToolAnswer, ToolCall } from './types.ts'
 import { requestRegionSelection, type RegionCaptureResult } from './region.ts'
 import { isApprovalDecision, type ApprovalAuthorization, type ApprovalPrompt, type ApprovalRequest } from '../security/approval.ts'
 import { ApprovalCoordinator, type ApprovalRequestResult } from './approval-coordinator.ts'
+import { narrowPageSharing, type PageSharingPreference } from '../common/page-sharing.ts'
 
 /** User settings persisted in chrome.storage.local. */
 export interface Settings {
   /** dsh address as the user typed it; empty means "discover a local dsh". */
   host: string
   token: string
-  sharePageContent: 'ask' | 'auto' | 'off'
+  sharePageContent: PageSharingPreference
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -245,6 +253,10 @@ function effectiveSettings(): Record<string, unknown> {
   return {
     host: settings.host,
     token: settings.token,
+    // The privacy axis is reported so the panel's control can reflect changes
+    // made elsewhere (the approval dialog's "always allow reads") and offer a
+    // way back — without it that preference would be write-only.
+    sharePageContent: settings.sharePageContent,
     effectiveUrl: resolved.ok ? resolved.url : '',
     loopback: resolved.ok ? resolved.loopback : false,
     plaintext: resolved.ok ? resolved.plaintext : false,
@@ -468,6 +480,10 @@ async function authorizeToolCall(prompt: ApprovalPrompt, signal: AbortSignal, wi
 function routeToolCall(call: ToolCall): void {
   if (bridge === null) return
   emitLog('info', `收到工具调用 ${call.name}${call.sessionId ? ` (session ${call.sessionId.slice(0, 8)}…)` : ''}`)
+  // The bridge's solved authorization for this call. Absent means the connected
+  // dsh exposes no tier capability; `ask` is then applied downstream, which is
+  // the same behavior an un-tiered deployment had before tiers existed.
+  const policy = call.policy
   const controller = new AbortController()
   const expiryTimer = call.expiresAt === undefined
     ? undefined
@@ -481,6 +497,7 @@ function routeToolCall(call: ToolCall): void {
         controller.signal,
         (tab) => { if (tab.id !== undefined) { controlledTabId = tab.id; return true } return false },
         () => controlledTabId !== null && controlledTabId !== undefined,
+        policy,
       ))
     : resolveControlledTab().then((target): Promise<ToolAnswer> => 'error' in target
       ? Promise.resolve({ ok: false, error: target.error })
@@ -490,6 +507,7 @@ function routeToolCall(call: ToolCall): void {
           controller.signal,
           target.tab,
           () => controlledTabId === target.tab.id,
+          policy,
         ))
   ).then(
     (answer) => {
@@ -603,6 +621,20 @@ chrome.runtime.onConnect.addListener((port) => {
               settings: effectiveSettings(),
             })
           } catch { /* closed */ }
+        })
+        break
+      }
+      case 'page-sharing.set': {
+        // The privacy axis is independent of the permission tier and does not
+        // touch the bridge: it is a local preference about what may leave the
+        // page, so changing it must not restart or reconfigure the connection.
+        const sharingMsg = message as { value?: unknown }
+        const nextSharing = narrowPageSharing(sharingMsg.value)
+        if (nextSharing === undefined) break
+        void settingsReady.then(async () => {
+          await persistSettings({ sharePageContent: nextSharing })
+          emitLog('info', `页面分享偏好已改为 ${nextSharing}`)
+          broadcastStatus()
         })
         break
       }

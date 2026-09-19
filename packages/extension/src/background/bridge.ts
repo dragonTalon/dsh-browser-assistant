@@ -15,9 +15,11 @@ import {
   isServerFrame,
   parseBridgeFrame,
 } from '@dsh-browser/protocol'
+import type { BridgeState } from '../common/connection-state.ts'
 
-/** Coarse connection state for the UI. */
-export type BridgeState = 'connecting' | 'connected' | 'reconnecting' | 'stopped'
+// Re-exported so background consumers keep one import surface; the panel
+// imports the same type from the common area directly.
+export type { BridgeState }
 
 /** Frame/state sinks owned by the background assembly. */
 export interface BridgeSinks {

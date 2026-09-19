@@ -42,6 +42,103 @@ export const BRIDGE_COMMANDS_EXECUTE_METHOD = 'commands.execute'
  */
 export const BRIDGE_SKILLS_LIST_METHOD = 'skills.list'
 
+/**
+ * RPC switching one session's permission tier. Payload carries `sessionId`
+ * alongside the target `preset` because the bridge resolves the preset against
+ * that session's own advertised tier set.
+ */
+export const BRIDGE_PERMISSION_SET_METHOD = 'permission.set'
+
+/**
+ * Event method carrying a session's permission tier after it actually changed.
+ * Emitted only on a real change, so a repeated identical value never produces a
+ * frame. Rides the existing `{ t: 'event' }` envelope — no new frame type.
+ */
+export const BRIDGE_SESSION_PERMISSION_EVENT = 'session/permission'
+
+/*
+ * Permission-tier vocabulary.
+ *
+ * The tier is a property of the dsh session, not of this wire: the bridge
+ * solves it from the session's permission projection and the extension only
+ * consumes the resulting per-call policy. The tier names here mirror the dsh
+ * permission presets exactly (`read-only` / `workspace-write` /
+ * `danger-full-access`), plus `custom` for the derived not-a-preset state.
+ */
+
+/**
+ * The dsh-BUILT-IN tier names, excluding the derived `custom`.
+ *
+ * This is a vocabulary, NOT a whitelist: a deployment may publish its own
+ * preset names, and every one of them is as legitimate as these three. A
+ * consumer MUST take the valid names from what the deployment advertises rather
+ * than from this list — treating it as a whitelist folds a deployment's own
+ * preset into the strictest tier and refuses work the user did authorize.
+ */
+export const BRIDGE_PERMISSION_TIERS = ['read-only', 'workspace-write', 'danger-full-access'] as const
+
+/**
+ * The derived not-a-preset tier dsh reports when the effective sandbox mode and
+ * approval policy match no preset entry. It is display state, never a switch
+ * target.
+ */
+export const CUSTOM_PERMISSION_VALUE = 'custom'
+
+/** One tier name as dsh publishes it. */
+export type BridgePermissionTier = typeof BRIDGE_PERMISSION_TIERS[number] | 'custom'
+
+/**
+ * The tier that stands in for a CONFIRMED ABSENT tier capability — an older dsh
+ * that publishes no permission data at all. Chosen as `workspace-write` so the
+ * fallback preserves the pre-tier behavior: page reads per the sharing
+ * preference, page-changing actions always confirmed.
+ *
+ * It MUST NOT be used for "the tier could not be solved this time". Those are
+ * different facts with different correct answers: a deployment that has no
+ * capability really does behave as this constant describes, whereas a failed
+ * solve knows nothing about the session's authority — substituting this value
+ * there would invent a tier the user never selected. A failed solve must
+ * surface as a diagnosable failure instead.
+ */
+export const BRIDGE_DEFAULT_PERMISSION_TIER: BridgePermissionTier = 'workspace-write'
+
+/**
+ * Per-call authorization the bridge solved for one tool call. This is the
+ * bridge's CONCLUSION, not an extension input: the extension must apply it
+ * verbatim and must never derive a tier from local state.
+ *
+ * `ask` is the fallback whenever a `tool.call` frame omits the field, so a new
+ * extension talking to an older bridge keeps the pre-tier behavior and no
+ * upgrade ordering can open an unconfirmed action window.
+ */
+export type ToolCallPolicy =
+  /** Run the action without producing an approval request. */
+  | 'auto'
+  /** Produce an approval request; no answer means refusal (fail-closed). */
+  | 'ask'
+
+/** Fallback policy for a `tool.call` frame that carries none. */
+export const DEFAULT_TOOL_CALL_POLICY: ToolCallPolicy = 'ask'
+
+/**
+ * Request body of {@link BRIDGE_PERMISSION_SET_METHOD}. `preset` is the target
+ * tier name; the bridge rejects anything outside the session's advertised set.
+ */
+export interface PermissionSetRequest {
+  /** Session whose tier is being switched. */
+  readonly sessionId: string
+  /** Target tier name. Must be one of the session's advertised tiers. */
+  readonly preset: string
+}
+
+/** Payload of {@link BRIDGE_SESSION_PERMISSION_EVENT}. */
+export interface SessionPermissionEvent {
+  /** Session whose tier changed. */
+  readonly sessionId: string
+  /** The tier now in effect, as dsh reports it. */
+  readonly value: BridgePermissionTier
+}
+
 /*
  * Wire contracts for the slash-command RPCs above.
  *
@@ -170,6 +267,36 @@ export type ToolErrorCode =
   | 'bridge-closed'
   | 'bad-args'
   | 'internal'
+  /** The session's permission tier forbids this action class (read-only tier). */
+  | 'permission-tier-denied'
+  /**
+   * The session's tier could not be solved, so no authorization could be
+   * established. Distinct from `permission-tier-denied` on purpose: that code
+   * asserts a tier refused the action, while this one asserts nothing is known
+   * about the tier. Consumers must not let the model read this as "another tool
+   * might be allowed".
+   */
+  | 'permission-tier-unresolved'
+  /**
+   * The tool name is not in the shared browser-tool registry. A registered
+   * tool that lost its classification is as unregistered as a name the
+   * registry never had: the call is refused before any `tool.call` frame is
+   * written, so the action never reaches the extension or the page.
+   */
+  | 'unknown-tool'
+
+/** Stable error codes a permission-tier RPC may fail with, understood by the panel. */
+export const PERMISSION_ERROR_CODES = {
+  /** The session does not advertise this preset name. */
+  unknownPreset: 'permission-unknown-preset',
+  /** `custom` is a derived display state and is never a switch target. */
+  customNotSwitchable: 'permission-custom-not-switchable',
+  /** The connected dsh exposes no permission-tier capability at all. */
+  capabilityUnavailable: 'permission-capability-unavailable',
+} as const
+
+/** One {@link PERMISSION_ERROR_CODES} value. */
+export type PermissionErrorCode = typeof PERMISSION_ERROR_CODES[keyof typeof PERMISSION_ERROR_CODES]
 
 /** One tool-call failure: stable machine code plus human text for the model. */
 export interface ToolError {
@@ -219,7 +346,25 @@ export type ServerFrame =
   /** One bridge-owned event envelope projected from Remote streams and waterfalls. */
   | { t: 'event'; frame: { rpcId: string; method: string; payload: unknown } }
   /** A model-requested browser action to execute in the user-controlled tab. */
-  | { t: 'tool.call'; id: string; name: string; args: Record<string, unknown>; expiresAt: number; sessionId?: string }
+  | {
+    t: 'tool.call'
+    id: string
+    name: string
+    args: Record<string, unknown>
+    expiresAt: number
+    sessionId?: string
+    /**
+     * The bridge's solved authorization for THIS call.
+     *
+     * Omitted in exactly one situation: the connected dsh is CONFIRMED to have
+     * no permission-tier capability, and an extension must then treat it as
+     * `ask` (see {@link DEFAULT_TOOL_CALL_POLICY}). A tier that exists but
+     * could not be solved is not this case — that call does not reach the
+     * extension at all, because the bridge fails it as diagnosable rather than
+     * sending an authorization it cannot vouch for.
+     */
+    policy?: ToolCallPolicy
+  }
   /** Withdraw a tool call that timed out or whose caller was cancelled. */
   | { t: 'tool.cancel'; id: string }
   /** Liveness probe. */
@@ -334,6 +479,12 @@ export function parseBridgeFrame(text: string): BridgeFrame | undefined {
             args: frame.args as Record<string, unknown>,
             expiresAt: frame.expiresAt,
             ...(typeof frame.sessionId === 'string' ? { sessionId: frame.sessionId } : {}),
+            // An unrecognized policy is dropped rather than rejected: the frame
+            // stays usable and the consumer's own fallback (ask) applies, which
+            // is the fail-closed reading of "this call's authorization is
+            // unclear". Rejecting the whole frame would instead surface as a
+            // dead call the model cannot diagnose.
+            ...(isToolCallPolicy(frame.policy) ? { policy: frame.policy } : {}),
           }
         : undefined
     case 'tool.cancel':
@@ -347,6 +498,15 @@ export function parseBridgeFrame(text: string): BridgeFrame | undefined {
     default:
       return undefined
   }
+}
+
+/**
+ * Type guard for the per-call authorization field.
+ * @param value - candidate value off a parsed `tool.call` frame.
+ * @returns true for the two known policies.
+ */
+function isToolCallPolicy(value: unknown): value is ToolCallPolicy {
+  return value === 'auto' || value === 'ask'
 }
 
 function isCaps(value: unknown): value is BridgeCaps {

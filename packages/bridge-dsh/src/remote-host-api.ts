@@ -17,15 +17,32 @@ import type {
   HostRpcResult,
 } from './host-api.ts'
 import { hostFailure, isRecord } from './host-api.ts'
-import {
-  ExtensionSessionRegistry,
-  shouldBridgeOwnQuestion,
-} from './extension-sessions.ts'
+import { ExtensionSessionRegistry } from './extension-sessions.ts'
 import {
   buildBridgeModelCatalog,
   type ModelCatalogServices,
 } from './model-catalog.ts'
-import type { CommandExecuteRequest, RespondResult } from '@dsh-browser/protocol'
+import {
+  BRIDGE_PERMISSION_SET_METHOD,
+  CUSTOM_PERMISSION_VALUE,
+  PERMISSION_ERROR_CODES,
+  type CommandExecuteRequest,
+  type RespondResult,
+} from '@dsh-browser/protocol'
+import type { PermissionServices } from './permission.ts'
+import { EventGeneration, isSessionSnapshot } from './event-generation.ts'
+import { historyPageValue, historyValue } from './history-expand.ts'
+import { WorkspaceGrouper } from './session-grouping.ts'
+import type {
+  EventResultSender,
+  FollowEntry,
+  FollowSnapshot,
+  HostInvoker,
+  RemoteEvent,
+  RemoteEventOutcome,
+  RemoteEventSource,
+  SessionFollowSource,
+} from './host-streams.ts'
 
 /** Structural subset of dsh 0.1.2's Host TypertGateway service. */
 export interface TypertGatewayLike {
@@ -50,14 +67,22 @@ export interface HostConnectionLike {
 
 /**
  * Deployment inputs for placing extension-created Sessions in a dsh Workspace.
- * Absent, or with no {@link SessionGroupingOptions.workspacePath}, the forwarded
- * `session.create` request must stay field-for-field identical to the caller's.
+ * Forwarded verbatim into the {@link WorkspaceGrouper} (session-grouping.ts),
+ * which owns the registration lifecycle. Absent, or with no `workspacePath`,
+ * the forwarded `session.create` request must stay field-for-field identical
+ * to the caller's.
  */
 export interface SessionGroupingOptions {
   /** Absolute directory whose Workspace owns extension-created Sessions. */
   readonly workspacePath?: string
   /** Sink for non-fatal grouping diagnostics; absent → silent. */
   readonly warn?: (message: string) => void
+  /** Sink for the resolution trace; absent → no trace is emitted. */
+  readonly trace?: (message: string) => void
+  /** Registration attempts one `session.create` may spend; forwarded. */
+  readonly registrationAttempts?: number
+  /** Wait between attempts, in ms; forwarded. */
+  readonly registrationRetryDelayMs?: number
 }
 
 interface InvokeTarget {
@@ -70,27 +95,33 @@ interface InvokeTarget {
 /** dsh error code for a Workspace identity that no longer resolves. */
 const WORKSPACE_NOT_FOUND = 'workspace/not-found'
 
-interface SessionSnapshot {
-  /** Inclusive Host log tip from session/follow; required for later session/page calls. */
-  readonly cursor: number
-  readonly records: readonly unknown[]
-  readonly hasMore: boolean
-  readonly projections?: unknown
-}
-
-interface PendingQuestion {
-  readonly sessionId: string
-  settled: boolean
-}
-
 /** Build the dsh 0.1.2 Host implementation. */
 export function createRemoteHostApi(
   gateway: TypertGatewayLike,
   connection: HostConnectionLike,
   modelServices?: ModelCatalogServices,
   sessionGrouping?: SessionGroupingOptions,
+  permissionServices?: PermissionServices,
 ): BrowserHostApi {
-  return new RemoteHostApi(gateway, connection, modelServices, sessionGrouping)
+  return new RemoteHostApi(gateway, connection, modelServices, sessionGrouping, permissionServices)
+}
+
+/**
+ * Read the failure text out of a command execution result.
+ *
+ * A command handler reports a rejected argument as `{ kind: 'error', text }`
+ * inside a successful invoke, not as a rejection, so the caller must inspect
+ * the envelope to tell "switched" from "no such preset".
+ * @param value - the `commands.execute` result.
+ * @returns the handler's error text, or undefined when the command succeeded.
+ */
+function commandErrorText(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const result = value.result
+  if (!isRecord(result) || result.kind !== 'error') return undefined
+  return typeof result.text === 'string' && result.text !== ''
+    ? result.text
+    : 'the permission command rejected the request'
 }
 
 class RemoteHostApi implements BrowserHostApi {
@@ -106,23 +137,44 @@ class RemoteHostApi implements BrowserHostApi {
   private lastFollowedSessionId: string | undefined
   private activeEvents: EventGeneration | undefined
   /**
-   * Workspace id owning extension-created Sessions, resolved from
-   * `sessionGrouping.workspacePath`. Only a SUCCESS is cached: a failed
-   * resolution must be retried by the next `session.create`, otherwise a
-   * transiently missing directory would pin the bridge to "ungrouped".
+   * HostInvoker primitive this adapter exposes to the business modules
+   * (workspace grouping). The seam takes `unknown` args; the adapter narrows
+   * them to the gateway's record shape.
    */
-  private groupedWorkspaceId: string | undefined
-  /** In-flight registration so concurrent creates share one `workspace.create`. */
-  private groupedWorkspacePending: Promise<string | undefined> | undefined
+  private readonly hostInvoker: HostInvoker = {
+    invoke: (namespace, method, args, signal) => this.gateway.invoke({
+      namespace,
+      method,
+      args: args as Readonly<Record<string, unknown>>,
+      signal,
+    }),
+  }
   /**
-   * Owns the lifetime of in-flight registration. It deliberately does NOT
-   * borrow the requesting connection's signal: that connection is replaced on
-   * every extension reconnect, and a signal captured into the shared
-   * registration path would kill every later attempt too — silently turning
-   * grouping off for the rest of the process. Only the wait is the caller's;
-   * the registration itself is the bridge's.
+   * Session-follow primitive: translates the host's wire stream into the seam
+   * shape — snapshot delivered separately, the incremental tail iterated.
    */
-  private readonly groupedWorkspaceAbort = new AbortController()
+  private readonly followSource: SessionFollowSource = {
+    open: (request, signal) => this.openFollow(request, signal),
+  }
+  /**
+   * Remote-event primitive: consumes and validates the ready frame, reduces
+   * it to `clientId`, and yields the remaining events.
+   */
+  private readonly remoteSource: RemoteEventSource = {
+    open: (signal) => this.openRemoteEvents(signal),
+  }
+  /** Outcome-sender primitive, bound to the adapter's $events/result path. */
+  private readonly resultSender: EventResultSender = {
+    send: (clientId, eventId, outcome, signal) => this.sendRemoteEventResult(clientId, eventId, outcome, signal),
+  }
+  /** Workspace grouping, built from the deployment options when present. */
+  private readonly grouper: WorkspaceGrouper | undefined
+  /**
+   * The deployment's grouping trace sink, kept for the adapter's own
+   * "caller named its own location" line (the grouper owns the rest of the
+   * resolution trace).
+   */
+  private readonly groupingTrace: ((message: string) => void) | undefined
 
   constructor(
     private readonly gateway: TypertGatewayLike,
@@ -130,15 +182,75 @@ class RemoteHostApi implements BrowserHostApi {
     /** Probed `llm`/`agentDefaultModel` pair; absent → model.catalog fails cleanly. */
     private readonly modelServices?: ModelCatalogServices,
     /** Deployment Session-grouping inputs; absent → create requests stay untouched. */
-    private readonly sessionGrouping?: SessionGroupingOptions,
+    sessionGrouping?: SessionGroupingOptions,
+    /** Probed projection accessors; absent → the bridge reports no tier capability. */
+    private readonly permissionServices?: PermissionServices,
   ) {
     this.fetchHandler = connection.createSharedFetchHandler('/api')
+    this.groupingTrace = sessionGrouping?.trace
+    this.grouper = sessionGrouping === undefined
+      ? undefined
+      : new WorkspaceGrouper({
+          host: this.hostInvoker,
+          workspacePath: sessionGrouping.workspacePath,
+          warn: sessionGrouping.warn,
+          trace: sessionGrouping.trace,
+          registrationAttempts: sessionGrouping.registrationAttempts,
+          registrationRetryDelayMs: sessionGrouping.registrationRetryDelayMs,
+        })
+  }
+
+  /** Translate one `session/follow` open into the seam shape. */
+  private async openFollow(
+    request: { readonly sessionId: string; readonly maxMessages?: number },
+    signal: AbortSignal,
+  ): Promise<{ readonly snapshot: FollowSnapshot } & AsyncIterable<FollowEntry>> {
+    const source = await this.gateway.wireStream.open(
+      'session/follow',
+      {
+        args: {
+          request: {
+            address: { kind: 'session', sessionId: request.sessionId },
+            ...(request.maxMessages === undefined ? {} : { maxMessages: request.maxMessages }),
+          },
+        },
+      },
+      signal,
+    )
+    const iterator = source[Symbol.asyncIterator]()
+    const first = await iterator.next()
+    // The consumer validates the snapshot shape itself; the adapter only
+    // enforces that a snapshot position exists to be validated. The iterator
+    // cast is the translation boundary: raw host frames are re-validated by
+    // the event generation before anything consumes them.
+    if (first.done) throw new TypeError('session/follow did not begin with a snapshot')
+    return {
+      snapshot: first.value as unknown as FollowSnapshot,
+      [Symbol.asyncIterator]: () => iterator as AsyncIterator<FollowEntry>,
+    }
+  }
+
+  /** Translate one `$events` open into the seam shape (ready reduced to clientId). */
+  private async openRemoteEvents(
+    signal: AbortSignal,
+  ): Promise<{ readonly clientId: string } & AsyncIterable<RemoteEvent>> {
+    const source = await this.gateway.wireStream.open('$events', { args: {} }, signal)
+    const iterator = source[Symbol.asyncIterator]()
+    const first = await iterator.next()
+    if (first.done || !isRemoteEventReady(first.value)) {
+      throw new TypeError('$events did not begin with ready')
+    }
+    return {
+      clientId: first.value.clientId,
+      [Symbol.asyncIterator]: () => iterator,
+    }
   }
 
   async call(call: HostRpcCall): Promise<HostRpcResult> {
     if (call.method === 'session.history') return this.sessionHistory(call)
     if (call.method === 'workspace.list') return this.workspaceList(call)
     if (call.method === 'model.catalog') return this.modelCatalog()
+    if (call.method === BRIDGE_PERMISSION_SET_METHOD) return this.permissionSet(call)
 
     const target = invokeTarget(call)
     if ('error' in target) return { ok: false, error: target.error }
@@ -151,8 +263,16 @@ class RemoteHostApi implements BrowserHostApi {
         const sessionId = sessionIdOf(call.payload)
         if (sessionId !== undefined) await this.activeEvents?.ensureSessionFollow(sessionId, call.signal)
       }
+      // A caller that named its own location is forwarded untouched, so say so
+      // in the trace: "no grouping" and "grouping silently skipped" would
+      // otherwise look identical from the outside.
+      if (call.method === 'session.create' && namesOwnLocation(call.payload)) {
+        this.groupingTrace?.(
+          'bridge-dsh: session.create 自带 workspaceId/cwd，按调用方位置原样转发（不做分组）',
+        )
+      }
       const groupedWorkspaceId = call.method === 'session.create' && !namesOwnLocation(call.payload)
-        ? await this.resolveGroupedWorkspaceId(call.signal)
+        ? await this.grouper?.resolve(call.signal)
         : undefined
       let value: unknown
       try {
@@ -169,7 +289,7 @@ class RemoteHostApi implements BrowserHostApi {
         // GUI. Retry the caller's ORIGINAL request exactly once so a stale
         // identity degrades to "ungrouped" instead of failing the Session.
         if (groupedWorkspaceId === undefined || hostFailure(error).code !== WORKSPACE_NOT_FOUND) throw error
-        this.groupedWorkspaceId = undefined
+        this.grouper?.forget()
         value = await this.gateway.invoke({
           namespace: target.namespace,
           method: target.method,
@@ -192,73 +312,99 @@ class RemoteHostApi implements BrowserHostApi {
   }
 
   /**
-   * Resolve the Workspace that should own an extension-created Session.
-   * Registration is idempotent, so an already-registered directory resolves to
-   * its existing identity without writing. Failures are never cached.
+   * Switch one session's permission tier by running dsh's own preset command.
    *
-   * The caller's signal bounds only how long THIS caller waits. The shared
-   * registration runs on the bridge's own lifetime and keeps its result, so a
-   * reconnect mid-registration cannot disable grouping for later callers.
-   * @param signal - the caller's RPC signal, used for the wait alone.
-   * @returns the Workspace id, or undefined when grouping is off or failed.
+   * The write deliberately goes through the command rather than through the
+   * bridge appending events: the command records the preset intent alongside
+   * the two knobs, so the dsh interface keeps showing which preset is selected
+   * and a later switch there cannot resurrect a stale one. Only the target NAME
+   * is validated here — whether the switch took effect is decided by the
+   * projection feed, never by this response.
+   * @param call - the `permission.set` request.
+   * @returns an empty success, or a stable failure the panel can act on.
    */
-  private async resolveGroupedWorkspaceId(signal: AbortSignal): Promise<string | undefined> {
-    const path = this.sessionGrouping?.workspacePath
-    if (path === undefined) return undefined
-    if (this.groupedWorkspaceId !== undefined) return this.groupedWorkspaceId
-    // A caller that is already gone cannot use a Session, so do not spend a
-    // registration (and a gateway call) that is bound to be discarded.
-    if (signal.aborted) return undefined
-    if (this.groupedWorkspacePending === undefined) {
-      this.groupedWorkspacePending = this.registerGroupedWorkspace(path, this.groupedWorkspaceAbort.signal)
-        .finally(() => { this.groupedWorkspacePending = undefined })
-    }
-    const pending = this.groupedWorkspacePending
-    let cancelWait = (): void => {}
-    const aborted = new Promise<undefined>((resolve) => {
-      cancelWait = () => { resolve(undefined) }
-      signal.addEventListener('abort', cancelWait, { once: true })
-    })
-    try {
-      return await Promise.race([pending, aborted])
-    } finally {
-      signal.removeEventListener('abort', cancelWait)
-    }
-  }
-
-  /**
-   * Register the configured directory as a Workspace and read back its id.
-   * Grouping is an enhancement, so every failure degrades to "no grouping"
-   * after emitting one diagnostic line — it must never fail the Session.
-   */
-  private async registerGroupedWorkspace(path: string, signal: AbortSignal): Promise<string | undefined> {
-    try {
-      const value = await this.gateway.invoke({
-        namespace: 'workspace',
-        method: 'create',
-        args: { request: { path } },
-        signal,
-      })
-      const workspaceId = workspaceIdOf(value)
-      if (workspaceId === undefined) {
-        throw new TypeError('workspace.create did not return workspace.workspaceId')
+  private async permissionSet(call: HostRpcCall): Promise<HostRpcResult> {
+    const payload = call.payload
+    if (!isRecord(payload) || typeof payload.sessionId !== 'string' || payload.sessionId === ''
+      || typeof payload.preset !== 'string' || payload.preset === '') {
+      return {
+        ok: false,
+        error: { code: 'permission-bad-request', message: 'permission.set requires { sessionId, preset }', details: {} },
       }
-      this.groupedWorkspaceId = workspaceId
-      return workspaceId
+    }
+    const services = this.permissionServices
+    if (services === undefined) {
+      return {
+        ok: false,
+        error: {
+          code: PERMISSION_ERROR_CODES.capabilityUnavailable,
+          message: 'this dsh deployment exposes no permission tiers',
+          details: {},
+        },
+      }
+    }
+    if (payload.preset === CUSTOM_PERMISSION_VALUE) {
+      return {
+        ok: false,
+        error: {
+          code: PERMISSION_ERROR_CODES.customNotSwitchable,
+          message: '"custom" describes settings that match no preset and is not a switch target',
+          details: {},
+        },
+      }
+    }
+    try {
+      // The whitelist check is dsh's own: `/permission` resolves the name
+      // against this deployment's preset table and rejects anything else. The
+      // bridge cannot improve on that — it has no Session object to read the
+      // advertised tiers from, and a built-in list would wrongly refuse a
+      // deployment that composes its own presets.
+      const value = await this.gateway.invoke({
+        namespace: 'commands',
+        method: 'execute',
+        args: {
+          agentId: payload.sessionId,
+          line: `/permission ${payload.preset}`,
+          submittedAttachments: [],
+        },
+        signal: call.signal,
+      })
+      const reported = commandErrorText(value)
+      if (reported !== undefined) {
+        return {
+          ok: false,
+          error: {
+            code: PERMISSION_ERROR_CODES.unknownPreset,
+            message: reported,
+            details: {},
+          },
+        }
+      }
+      return { ok: true, value: {} }
     } catch (error: unknown) {
-      this.groupedWorkspaceId = undefined
-      const failure = hostFailure(error)
-      this.sessionGrouping?.warn?.(
-        `bridge-dsh: sessionWorkspace ${JSON.stringify(path)} 注册失败（${failure.code}: ${failure.message}），本次会话将不分组`,
-      )
-      return undefined
+      const failure = this.failure(error)
+      // A deployment can expose the projection without the command registry
+      // that owns the write path. Report that as a missing capability rather
+      // than as the generic not-found the gateway would produce.
+      if (failure.code === 'not-found' || failure.code === 'gateway/service-unavailable') {
+        return {
+          ok: false,
+          error: {
+            code: PERMISSION_ERROR_CODES.capabilityUnavailable,
+            message: 'this dsh deployment exposes no permission command',
+            details: {},
+          },
+        }
+      }
+      return { ok: false, error: failure }
     }
   }
 
   async *events(signal: AbortSignal): AsyncIterable<HostEventFrame> {
     const generation = new EventGeneration(
-      this.gateway,
-      this.sendRemoteEventResult.bind(this),
+      this.followSource,
+      this.remoteSource,
+      this.resultSender,
       this.extensionSessions,
       this.noteHistoryCursor.bind(this),
       (sessionId) => this.historyCursors.get(sessionId),
@@ -449,357 +595,6 @@ class RemoteHostApi implements BrowserHostApi {
   }
 }
 
-type SendRemoteEventResult = (
-  clientId: string,
-  eventId: string,
-  outcome: RemoteEventOutcome,
-  signal: AbortSignal,
-) => Promise<void>
-
-type RemoteEventOutcome =
-  | { readonly kind: 'next' }
-  | { readonly kind: 'result'; readonly value?: unknown }
-  | {
-    readonly kind: 'rejected'
-    readonly error: {
-      readonly name: string
-      readonly message: string
-      readonly code?: string
-      readonly details?: unknown
-    }
-  }
-
-/** One authenticated extension connection's event streams and active Session follower. */
-class EventGeneration {
-  private readonly lifetime = new AbortController()
-  private readonly signal: AbortSignal
-  private readonly queue = new AsyncEventQueue()
-  private readonly tasks = new Set<Promise<void>>()
-  private readonly pendingQuestions = new Map<string, PendingQuestion>()
-  private clientId: string | undefined
-  private followAbort: AbortController | undefined
-  private followedSessionId: string | undefined
-  private followRevision = 0
-  private disposed = false
-
-  constructor(
-    private readonly gateway: TypertGatewayLike,
-    private readonly sendResult: SendRemoteEventResult,
-    private readonly extensionSessions: ExtensionSessionRegistry,
-    private readonly onHistoryCursor: (sessionId: string, cursor: number) => void,
-    /** Read the cross-generation delivered-seq cursor (RemoteHostApi.historyCursors). */
-    private readonly historyCursorOf: (sessionId: string) => number | undefined,
-    /** Report a successfully established follow so later generations can resume it. */
-    private readonly onFollowed: (sessionId: string) => void,
-    outerSignal: AbortSignal,
-  ) {
-    this.signal = AbortSignal.any([outerSignal, this.lifetime.signal])
-  }
-
-  start(): void {
-    this.track(this.pumpRemoteEvents())
-  }
-
-  events(): AsyncIterable<HostEventFrame> {
-    return this.queue.iterate(this.signal)
-  }
-
-  async openSessionHistory(
-    sessionId: string,
-    callSignal: AbortSignal,
-    maxMessages?: number,
-  ): Promise<SessionSnapshot> {
-    return this.openSessionFollow(sessionId, callSignal, maxMessages)
-  }
-
-  async ensureSessionFollow(sessionId: string, callSignal: AbortSignal): Promise<void> {
-    if (this.followedSessionId === sessionId && this.followAbort?.signal.aborted === false) return
-    await this.openSessionFollow(sessionId, callSignal)
-  }
-
-  async respond(rpcId: string, result: RespondResult, signal: AbortSignal): Promise<unknown> {
-    const pending = this.pendingQuestions.get(rpcId)
-    const clientId = this.clientId
-    if (pending === undefined || pending.settled || clientId === undefined) {
-      return { accepted: false, reason: 'not-pending' }
-    }
-    pending.settled = true
-    try {
-      await this.sendResult(clientId, rpcId, respondOutcome(result), AbortSignal.any([this.signal, signal]))
-      return { accepted: true }
-    } catch (error: unknown) {
-      pending.settled = false
-      throw error
-    }
-  }
-
-  async dispose(): Promise<void> {
-    if (this.disposed) return
-    this.disposed = true
-    this.followAbort?.abort(new Error('browser bridge event generation closed'))
-    this.lifetime.abort(new Error('browser bridge event generation closed'))
-    this.queue.end()
-    await Promise.all(this.tasks)
-  }
-
-  private async openSessionFollow(
-    sessionId: string,
-    callSignal: AbortSignal,
-    maxMessages?: number,
-  ): Promise<SessionSnapshot> {
-    const revision = ++this.followRevision
-    this.followAbort?.abort(new Error('browser bridge Session follower replaced'))
-    const controller = new AbortController()
-    this.followAbort = controller
-    this.followedSessionId = sessionId
-    const signal = AbortSignal.any([this.signal, callSignal, controller.signal])
-    try {
-      const source = await this.gateway.wireStream.open(
-        'session/follow',
-        {
-          args: {
-            request: {
-              address: { kind: 'session', sessionId },
-              ...(maxMessages === undefined ? {} : { maxMessages }),
-            },
-          },
-        },
-        signal,
-      )
-      const iterator = source[Symbol.asyncIterator]()
-      const first = await iterator.next()
-      if (first.done || !isSessionSnapshot(first.value)) {
-        await iterator.return?.()
-        throw new TypeError('session/follow did not begin with a snapshot')
-      }
-      if (revision !== this.followRevision || signal.aborted) {
-        await iterator.return?.()
-        signal.throwIfAborted()
-        throw new Error('browser bridge Session follower was replaced while opening')
-      }
-      // Backfill BEFORE noting the snapshot cursor (the filter needs the
-      // pre-snapshot tip) and BEFORE returning to the caller: a
-      // session.history rpc.result is written only after this return, so
-      // backfilled frames always reach the extension ahead of that response
-      // on the single ordered WebSocket — the panel renders them, then its
-      // reloadHistory re-render replaces them with the same events. Exactly
-      // once, no panel-side dedup needed.
-      this.backfillSnapshot(sessionId, first.value.records)
-      this.onHistoryCursor(sessionId, first.value.cursor)
-      this.onFollowed(sessionId)
-      this.track(this.pumpSessionEvents(sessionId, revision, iterator, signal))
-      return {
-        cursor: first.value.cursor,
-        records: first.value.records,
-        hasMore: first.value.hasMore,
-        ...(first.value.projections === undefined ? {} : { projections: first.value.projections }),
-      }
-    } catch (error: unknown) {
-      if (revision === this.followRevision) {
-        this.followedSessionId = undefined
-        this.followAbort = undefined
-      }
-      throw error
-    }
-  }
-
-  /**
-   * Re-deliver events the extension missed while disconnected: expand the
-   * follow snapshot into scalar events and push only those strictly newer
-   * than the cross-generation delivered cursor. Without a cursor (first
-   * follow of this Session in the process) nothing is pushed — flooding the
-   * extension with full history on every first prompt is not wanted. A
-   * malformed record is skipped rather than failing the whole follow.
-   */
-  private backfillSnapshot(sessionId: string, records: readonly unknown[]): void {
-    const deliveredSeq = this.historyCursorOf(sessionId)
-    if (deliveredSeq === undefined) return
-    for (const record of records) {
-      let events: Record<string, unknown>[]
-      try {
-        events = historyRecordEvents(record)
-      } catch {
-        continue
-      }
-      for (const event of events) {
-        const seq = event.seq
-        if (typeof seq !== 'number' || seq <= deliveredSeq) continue
-        this.queue.push({
-          rpcId: crypto.randomUUID(),
-          method: 'session/event',
-          payload: { type: 'session/event', sessionId, event },
-        })
-      }
-    }
-  }
-
-  private async pumpSessionEvents(
-    sessionId: string,
-    revision: number,
-    iterator: AsyncIterator<unknown>,
-    signal: AbortSignal,
-  ): Promise<void> {
-    try {
-      while (!signal.aborted) {
-        const next = await iterator.next()
-        // Abort is advisory to an AsyncIterator: a buffered frame may still
-        // resolve after this follower was replaced. Never let that stale
-        // generation update the extension's active/recent session state.
-        if (signal.aborted || revision !== this.followRevision) break
-        if (next.done) break
-        if (!isSessionEventEntry(next.value)) {
-          throw new TypeError('session/follow emitted an invalid incremental frame')
-        }
-        const seq = next.value.event.seq
-        if (typeof seq === 'number') this.onHistoryCursor(sessionId, seq)
-        this.queue.push({
-          rpcId: crypto.randomUUID(),
-          method: 'session/event',
-          payload: { type: 'session/event', sessionId, event: next.value.event },
-        })
-      }
-      if (!signal.aborted && revision === this.followRevision) {
-        throw new Error('session/follow ended unexpectedly')
-      }
-    } catch (error: unknown) {
-      if (!signal.aborted && revision === this.followRevision) this.queue.fail(error)
-    } finally {
-      await iterator.return?.()
-      if (revision === this.followRevision) {
-        this.followedSessionId = undefined
-        this.followAbort = undefined
-      }
-    }
-  }
-
-  private async pumpRemoteEvents(): Promise<void> {
-    try {
-      const source = await this.gateway.wireStream.open('$events', { args: {} }, this.signal)
-      let ready = false
-      for await (const value of source) {
-        if (!ready) {
-          if (!isRemoteEventReady(value)) throw new TypeError('$events did not begin with ready')
-          this.clientId = value.clientId
-          ready = true
-          continue
-        }
-        await this.handleRemoteEvent(value)
-      }
-      if (!this.signal.aborted) throw new Error('$events ended unexpectedly')
-    } catch (error: unknown) {
-      if (!this.signal.aborted) this.queue.fail(error)
-    }
-  }
-
-  private async handleRemoteEvent(value: unknown): Promise<void> {
-    if (!isRecord(value) || typeof value.type !== 'string') {
-      throw new TypeError('$events emitted an invalid frame')
-    }
-    if (value.type === 'emit') return
-    if (value.type === 'cancel' && typeof value.eventId === 'string') {
-      const pending = this.pendingQuestions.get(value.eventId)
-      if (pending === undefined) return
-      this.pendingQuestions.delete(value.eventId)
-      this.queue.push({
-        rpcId: crypto.randomUUID(),
-        method: 'question/resolved',
-        payload: {
-          type: 'question/resolved',
-          sessionId: pending.sessionId,
-          questionRpcId: value.eventId,
-        },
-      })
-      return
-    }
-    if (value.type !== 'waterfall'
-      || typeof value.event !== 'string'
-      || typeof value.eventId !== 'string'
-      || typeof value.agentId !== 'string'
-      || !isRecord(value.request)) {
-      throw new TypeError('$events emitted an invalid waterfall frame')
-    }
-    if (value.event !== 'user-questions/request' || !Array.isArray(value.request.questions)) {
-      const clientId = this.clientId
-      if (clientId !== undefined) {
-        await this.sendResult(clientId, value.eventId, { kind: 'next' }, this.signal)
-      }
-      return
-    }
-    // Desktop-owned sessions keep the native waterfall. Only forward questions
-    // for sessions the extension successfully created or prompted.
-    if (!shouldBridgeOwnQuestion({
-      hasExtensionConnection: true,
-      sessionId: value.agentId,
-      extensionSessions: this.extensionSessions,
-    })) {
-      const clientId = this.clientId
-      if (clientId !== undefined) {
-        await this.sendResult(clientId, value.eventId, { kind: 'next' }, this.signal)
-      }
-      return
-    }
-    this.pendingQuestions.set(value.eventId, { sessionId: value.agentId, settled: false })
-    this.queue.push({
-      rpcId: value.eventId,
-      method: 'question/requested',
-      payload: {
-        type: 'question/requested',
-        sessionId: value.agentId,
-        questions: value.request.questions,
-      },
-    })
-  }
-
-  private track(task: Promise<void>): void {
-    const tracked = task.catch((error: unknown) => {
-      if (!this.signal.aborted) this.queue.fail(error)
-    })
-    this.tasks.add(tracked)
-    void tracked.finally(() => { this.tasks.delete(tracked) })
-  }
-}
-
-class AsyncEventQueue {
-  private readonly frames: HostEventFrame[] = []
-  private wake: (() => void) | undefined
-  private failure: unknown
-  private closed = false
-
-  push(frame: HostEventFrame): void {
-    if (this.closed || this.failure !== undefined) return
-    this.frames.push(frame)
-    this.wake?.()
-  }
-
-  fail(error: unknown): void {
-    if (this.closed || this.failure !== undefined) return
-    this.failure = error
-    this.wake?.()
-  }
-
-  end(): void {
-    if (this.closed) return
-    this.closed = true
-    this.wake?.()
-  }
-
-  async *iterate(signal: AbortSignal): AsyncGenerator<HostEventFrame> {
-    const onAbort = (): void => { this.wake?.() }
-    signal.addEventListener('abort', onAbort, { once: true })
-    try {
-      while (true) {
-        while (this.frames.length > 0) yield this.frames.shift() as HostEventFrame
-        if (this.failure !== undefined) throw this.failure
-        if (this.closed || signal.aborted) return
-        await new Promise<void>((resolve) => { this.wake = resolve })
-        this.wake = undefined
-      }
-    } finally {
-      signal.removeEventListener('abort', onAbort)
-    }
-  }
-}
-
 function invokeTarget(call: HostRpcCall): InvokeTarget | { readonly error: HostRpcFailure } {
   if (!isRecord(call.payload)) return { error: badRequestFailure(`${call.method} payload must be an object`) }
   switch (call.method) {
@@ -894,7 +689,7 @@ async function oneShotSessionSnapshot(
   sessionId: string,
   outerSignal: AbortSignal,
   maxMessages?: number,
-): Promise<SessionSnapshot> {
+): Promise<FollowSnapshot> {
   const controller = new AbortController()
   const signal = AbortSignal.any([outerSignal, controller.signal])
   const source = await gateway.wireStream.open(
@@ -927,29 +722,6 @@ async function oneShotSessionSnapshot(
   }
 }
 
-function historyValue(snapshot: SessionSnapshot): Record<string, unknown> {
-  return {
-    // 0.1.2 snapshots compact consecutive Assistant deltas into chunk rows.
-    // The extension intentionally keeps its small scalar-event model, so the
-    // Host boundary expands those rows losslessly before crossing our wire.
-    events: snapshot.records.flatMap(historyRecordEvents).map(event => ({ event })),
-    hasMore: snapshot.hasMore,
-    ...(snapshot.projections === undefined ? {} : { projections: snapshot.projections }),
-  }
-}
-
-function historyPageValue(page: unknown): Record<string, unknown> {
-  if (!isRecord(page) || !Array.isArray(page.records) || typeof page.hasMore !== 'boolean') {
-    throw new TypeError('session/page returned an invalid history page')
-  }
-  return historyValue({
-    cursor: -1,
-    records: page.records,
-    hasMore: page.hasMore,
-    ...(page.projections === undefined ? {} : { projections: page.projections }),
-  })
-}
-
 function optionalNonNegativeInteger(
   payload: unknown,
   key: string,
@@ -974,119 +746,6 @@ function optionalPositiveInteger(
   return value as number
 }
 
-function historyRecordEvents(record: unknown): Record<string, unknown>[] {
-  if (!isRecord(record)
-    || (record.type !== 'event' && record.type !== 'chunks')
-    || !isRecord(record.event)) {
-    throw new TypeError('session history carried an invalid record')
-  }
-  const event = record.event
-  if (!isChunkRowEvent(event)) {
-    if (record.type === 'chunks') {
-      throw new TypeError('session history chunks record carried a non-chunk event')
-    }
-    return [event]
-  }
-
-  const data = event.data
-  const members = event.type === 'chunkrow/tool-call-chunks' ? data.args : data.texts
-  const deltas = data.dt
-  if (!Array.isArray(members) || members.length === 0 || members.some(member => typeof member !== 'string')
-    || !Array.isArray(deltas) || deltas.length !== members.length - 1
-    || deltas.some(delta => !Number.isSafeInteger(delta))) {
-    throw new TypeError(`${event.type} carried an invalid compact run`)
-  }
-  if (members.length - 1 > Number.MAX_SAFE_INTEGER - event.seq) {
-    throw new TypeError(`${event.type} sequence range is unsafe`)
-  }
-
-  const events: Record<string, unknown>[] = []
-  let time = event.time
-  for (let index = 0; index < members.length; index += 1) {
-    if (index > 0) time += deltas[index - 1] as number
-    if (!Number.isSafeInteger(time)) throw new TypeError(`${event.type} timestamp range is unsafe`)
-    const chunk = compactChunk(event.type, data, members[index] as string)
-    events.push({
-      type: 'assistant/chunk',
-      seq: event.seq + index,
-      time,
-      data: { turn: data.turn, step: data.step, chunk },
-    })
-  }
-  return events
-}
-
-type ChunkRowEvent = {
-  readonly type: 'chunkrow/text-chunks' | 'chunkrow/reasoning-chunks' | 'chunkrow/tool-call-chunks'
-  readonly seq: number
-  readonly time: number
-  readonly data: Record<string, unknown> & {
-    readonly turn: number
-    readonly step: number
-    readonly index: number
-    readonly dt: readonly unknown[]
-    readonly texts?: readonly unknown[]
-    readonly args?: readonly unknown[]
-  }
-}
-
-function isChunkRowEvent(event: Record<string, unknown>): event is ChunkRowEvent {
-  if (event.type !== 'chunkrow/text-chunks'
-    && event.type !== 'chunkrow/reasoning-chunks'
-    && event.type !== 'chunkrow/tool-call-chunks') return false
-  if (!Number.isSafeInteger(event.seq) || (event.seq as number) < 0 || !Number.isSafeInteger(event.time)
-    || !isRecord(event.data)) {
-    throw new TypeError(`${String(event.type)} carried an invalid compact envelope`)
-  }
-  const data = event.data
-  if (typeof data.turn !== 'number' || typeof data.step !== 'number' || typeof data.index !== 'number') {
-    throw new TypeError(`${String(event.type)} carried invalid compact coordinates`)
-  }
-  if (event.type === 'chunkrow/tool-call-chunks'
-    && (typeof data.id !== 'string' || (data.name !== undefined && typeof data.name !== 'string'))) {
-    throw new TypeError(`${event.type} carried an invalid tool identity`)
-  }
-  return true
-}
-
-function compactChunk(
-  type: ChunkRowEvent['type'],
-  data: ChunkRowEvent['data'],
-  member: string,
-): Record<string, unknown> {
-  if (type === 'chunkrow/text-chunks') {
-    return { type: 'text-delta', index: data.index, text: member }
-  }
-  if (type === 'chunkrow/reasoning-chunks') {
-    return { type: 'reasoning-delta', index: data.index, text: member }
-  }
-  return {
-    type: 'tool-call-delta',
-    index: data.index,
-    id: data.id,
-    ...(data.name === undefined ? {} : { name: data.name }),
-    argumentsDelta: member,
-  }
-}
-
-function respondOutcome(result: RespondResult): RemoteEventOutcome {
-  if (result.ok) {
-    const value = isRecord(result.value) && isRecord(result.value.answer)
-      ? result.value.answer
-      : result.value
-    return value === undefined ? { kind: 'result' } : { kind: 'result', value }
-  }
-  return {
-    kind: 'rejected',
-    error: {
-      name: 'Error',
-      message: result.error.message,
-      code: result.error.code,
-      details: result.error.details,
-    },
-  }
-}
-
 function sessionIdOf(payload: unknown): string | undefined {
   if (!isRecord(payload)) return undefined
   if (typeof payload.sessionId !== 'string') return undefined
@@ -1109,20 +768,6 @@ function requireSessionId(call: HostRpcCall): string | { readonly error: HostRpc
   return sessionId ?? { error: badRequestFailure(`${call.method} requires a non-empty sessionId`) }
 }
 
-/** Read `workspace.workspaceId` out of a `workspace.create` value. */
-function workspaceIdOf(value: unknown): string | undefined {
-  if (!isRecord(value)) return undefined
-  const workspace = value.workspace
-  if (!isRecord(workspace)) return undefined
-  const workspaceId = workspace.workspaceId
-  return typeof workspaceId === 'string' && workspaceId.length > 0 ? workspaceId : undefined
-}
-
-/**
- * Whether the caller named a location of its own. An explicit `workspaceId` or
- * `cwd` is the caller's decision and MUST reach dsh untouched. An unrecognized
- * payload counts as "named" so nothing is injected into a shape we cannot read.
- */
 function namesOwnLocation(payload: unknown): boolean {
   if (!isRecord(payload)) return true
   return payload.workspaceId !== undefined || payload.cwd !== undefined
@@ -1156,29 +801,6 @@ function isWorkspaceBaseline(value: unknown): value is {
   readonly value: Record<string, unknown>
 } {
   return isRecord(value) && value.type === 'baseline' && isRecord(value.value)
-}
-
-function isSessionSnapshot(value: unknown): value is {
-  readonly type: 'snapshot'
-  readonly cursor: number
-  readonly records: readonly unknown[]
-  readonly hasMore: boolean
-  readonly projections?: unknown
-} {
-  return isRecord(value)
-    && value.type === 'snapshot'
-    && Number.isSafeInteger(value.cursor)
-    && (value.cursor as number) >= -1
-    && (value.cursor as number) !== Number.MAX_SAFE_INTEGER
-    && Array.isArray(value.records)
-    && typeof value.hasMore === 'boolean'
-}
-
-function isSessionEventEntry(value: unknown): value is {
-  readonly type: 'event'
-  readonly event: Record<string, unknown>
-} {
-  return isRecord(value) && value.type === 'event' && isRecord(value.event)
 }
 
 function isRemoteEventReady(value: unknown): value is {

@@ -12,9 +12,13 @@
 | `protocol.ts` → [`@dsh-browser/protocol`](protocol.md) | 帧类型+解析器（与扩展共享，唯一真相源） |
 | `model-catalog.ts` | 模型目录组装：`llm`/`agentDefaultModel` 的结构化窄接口 + 逐 provider 故障隔离 |
 | `server.ts` | WebSocket 服务器：鉴权、单连接、RPC 透传、工具分发、事件泵 |
-| `remote-host-api.ts` | **Host 适配层**：把 Typert Gateway + Connection 包装成 `BrowserHostApi` |
+| `remote-host-api.ts` | **纯 Host 适配层**：把 Typert Gateway + Connection 翻译成 `BrowserHostApi` 与传输原语（`host-streams.ts`），不承载业务逻辑 |
 | `host-api.ts` | 窄接口 `BrowserHostApi`（call/events/respond），隔离 dsh 版本差异 |
-| `tools.ts` | 12 个 `browser_*` 工具定义（模型视角的契约） |
+| `host-streams.ts` | 四个传输原语接口（`SessionFollowSource`/`RemoteEventSource`/`HostInvoker`/`EventResultSender`）：按业务所需的最小流语义定义，与 dsh 0.1.2 线形状无关 |
+| `event-generation.ts` | host 无关的事件代业务：session/follow 生命周期、断连回补、跨代游标、waterfall 归属、`AsyncEventQueue`；对 fake transport 可单测 |
+| `history-expand.ts` | chunkrow 压缩行展开纯函数（0.1.2 快照 → 标量事件模型） |
+| `session-grouping.ts` | host 无关的 workspace 分组：注册/重试/解析，依赖 `HostInvoker` |
+| `tools.ts` | 12 个 `browser_*` 工具定义（模型视角的契约）；工具名与语义分类取自协议包注册表（见下） |
 | `token.ts` | bearer token 生成/持久化/恒定时间校验 |
 | `extension-sessions.ts` | 记录扩展创建的会话，决定 `ask_user_question` 归谁答 |
 | `cordis.patch.yml` | 注册进 profile 时应用的 patch（`insert` 本插件 + 默认配置） |
@@ -28,7 +32,7 @@
 - `connection`：`createSharedFetchHandler('/api')`（回传 `$events/result` 应答）
 - `tools`：`ctx.tools.register`（注册模型可调的工具）
 
-`remote-host-api.ts` 把这三者收敛成 `BrowserHostApi`，所以 dsh 版本演进只改这一处适配，不影响桥服务器和扩展。
+`remote-host-api.ts` 把这三者收敛成 `BrowserHostApi`，并实现 `host-streams.ts` 定义的传输原语（快照+增量的 follow、ready+事件的远程流、一元调用、结果回执）。事件代、分组等业务逻辑只消费这些原语，与 dsh 线形状解耦——**dsh 版本演进只重写适配层的形状翻译，业务模块零改动**（回补/去重/跟随替换由 `pnpm check:adapter-seam` 用 fake transport 离线校验）。
 
 此外还有一组**探测式可选服务**（不进 `inject`，用 `ctx.get` 探测，缺失仅让 `model.catalog` 降级不立即使插件不可用）：
 
@@ -57,6 +61,47 @@
 | **断代续订** | 换代（重连）后新事件代自动重开最近会话的 `session/follow`；按跨代 seq 游标把断连窗口错过的事件从快照回补推送（先于任何 `session.history` 应答入队，与面板重渲染天然去重）；恢复失败静默降级，不拖垮新连接 |
 | **提问转发** | `$events` 里的 `user-questions/request` waterfall，若归属扩展会话则转发为 `question/requested`，否则 `next()` 交给 dsh 原生 UI |
 
+## 工具注册表（工具语义的唯一事实来源）
+
+12 个工具的名称与语义分类（动作类别 read/observe/mutate/navigate、是否附带页面 delta、是否为导航候选）由 `@dsh-browser/protocol` 的 `browser-tools.ts` 注册表**唯一**声明。档位闸门的分类、扩展的审批判定/delta 附带/导航快照策略全部从注册表派生，任何消费方不得维护本地分类表——一个工具只加进一张表而漏掉另一张，正是写操作失去档位闸门的路径。
+
+- **未注册名 fail-closed**：桥接层对注册表无法识别的工具名以稳定错误码 `unknown-tool` 失败该调用，且**不产生 `tool.call` 帧**——动作不得到达扩展或页面，也不产生审批请求。
+- **漂移防护**：`pnpm check:tool-registry` 打包真实源码断言全部消费点派生结果与注册表一致、`unknown-tool` 拒绝路径零帧（用缺失一条注册项的协议 shim 模拟漂移构建），并 grep 断言源码中不再出现本地分类表字面量。
+
+## 权限档位闸门
+
+浏览器写操作的授权按会话权限档位判定，判定发生在桥接侧，扩展只消费结论。
+
+**真相源是会话自身的旋钮事件**。dsh 把档位写成三个普通会话事件——`permission/preset`（用户选定的预设）、`sandbox/mode`、`approval/policy`——桥接折叠这三者得到当前档位。`permissions` 投影由同一批事件导出，但读取它要穿过注册表查询、cell 物化与 schema 校验三层，每层都可能失败，且失败与「这个部署没有档位数据」在调用点完全同形。折叠则是对会话日志的纯函数，同一份日志必得同一结果。
+
+投影仍会被读，但只用于两件事：**得知部署公布了哪些预设名**，以及与折叠结果做**交叉核对**。两者都不取代折叠作为闸门输入。
+
+### 求解结果是三态，互不折算
+
+| 结果 | 含义 | 闸门行为 |
+|---|---|---|
+| **已求解** | 折叠出预设名，或旋钮不匹配任何预设时为 `custom` | 按档位判定 |
+| **无档位能力** | 可证明该部署不提供档位数据（未公布任何预设表） | 省略帧内策略，扩展按 tier 之前的读写两态运行 |
+| **求解失败** | 会话存在但档位无法求解 | 以稳定错误码 `permission-tier-unresolved` 显式失败，**不产生审批请求**，也 MUST NOT 按任何档位放行 |
+
+求解失败**不会**回退到部署默认档位。用猜出来的档位继续执行，等于发明一个用户从未选择过的授权；这正是「完全权限下仍然弹确认框」这类故障的来源。失败详情含会话标识与失败环节（`session-unreadable` / `malformed-knob-event` / `no-knob-events` / `preset-bundle-unknown`）。
+
+模型可见的失败文案刻意**不**表述为档位拒绝（否则模型会改找另一个能做同样动作的工具），而是说明档位无法确定并给出重试路径。
+
+### 档位名以部署公布的预设表为准
+
+预设名本身不含语义，因此桥接在挂载期（一次性，非每次调用）探测可选的 `permissionPresets` 宿主服务，把每个预设名解析成 `{sandbox, approval}`，构成完整 bundle 表；取不到的名字回落投影声明，再回落 dsh 内建三档。服务缺失时插件照常启动，无法解释的预设名以 `preset-bundle-unknown` 显式失败而不是被猜成某一档。
+
+会话记录的预设名**不必**出现在当前公布的列表里：部署可能收窄了预设表，而会话日志才是该会话实际运行状态的权威。
+
+`custom`（旋钮不匹配任何预设）按最严档位 `read-only` 判定——那不是「读不出来」，而是「确实不匹配」。
+
+### 交叉核对与档位收紧
+
+折叠是对 dsh 推导的**镜像**，而镜像可能算错，不只是取不到。dsh 由同一批事件导出投影，因此在健康的部署里两者必然一致；不一致时桥接**留痕（含会话标识）并以两者中更严的一方参与判定**——同一权威的两种读法互相矛盾时，不应朝着授权更多的方向消解。投影读取失败不参与收紧，折叠结果照常生效。
+
+档位变动经 `session/event` 追加流驱动：只有真实变化才推送 `session/permission` 事件并（在下降时）用 `tool.cancel` 撤回该会话在途调用。扩展收到的档位始终是闸门实际使用的那一个。
+
 ## 配置
 
 | 键 | 类型 | 默认 | 说明 |
@@ -75,9 +120,24 @@
 
 - **只影响新建会话**：dsh 唯一的「收养」入口要求会话 header 的 `cwd` 等于工作区 path，历史会话 cwd 不同，无法迁移；存量会话需在 GUI 侧自行处理。
 - **显式位置优先**：请求自带 `workspaceId` 或 `cwd` 时不注入，调用方的选择原样透传。
-- **失败不连累会话创建**：目录不存在或注册被拒时会话照常创建（仅落回「未分组」），并输出一行含配置路径的诊断日志；失败**不会被永久缓存**，目录恢复后下次会话自动重新注册。
+- **失败不连累会话创建**：目录不存在或注册被拒时会话照常创建（仅落回「未分组」），并输出一行含配置路径的诊断日志。注册失败分两类处理：**瞬时**原因（网关暂不可用、调用超时、应答丢失）会在**同一次** `session.create` 内重试一次，因此在工作区尚未建出的部署上，首个会话也会先建工作区再开会话；**永久**原因（路径不存在、请求被拒）不做无意义重试，直接退回未分组。失败**不会被永久缓存**，目录恢复后下次会话自动重新注册。
 - **配置为权威**：若在 GUI 中删除了该工作区，下一次扩展创建会话会按配置重新登记它。要停用请移除本配置项，而不是删除工作区。
 - **不建目录**：插件不创建目录（避免掩盖路径拼写错误），目录存在性由部署保证。
+
+### 排查：会话没有进分组
+
+分组点只发生在**扩展发起 `session.create` 的那一刻**——那是桥接唯一能注入 `workspaceId` 的时机。所以「会话在 dsh 里，但不在分组下」只可能是三件事之一，且都能从日志与注册表读出来：
+
+1. **配置未生效**：插件挂载时会打印 `会话分组已启用，扩展创建的会话将归入工作区 <路径>`。没有这一行，就是该 dsh 进程没读到 `sessionWorkspace`（配置写进了别的 profile，或改完没重启）。
+2. **注册没成功**：每次解析都会留痕——`正在把 <路径> 注册为 dsh 工作区…`，随后是 `工作区已解析 workspaceId=…`（成功，后续会话复用该身份）或 `sessionWorkspace … 注册失败（<code>: <message>）…`（失败，本次会话不分组；失败不固化，下次重试）。调用方自己取消时留下 `session.create 到达时调用方已取消…`。
+3. **那次会话早于分组能力**：注册发生之前创建的会话不会被追溯分组。用下面的脚本对照「注册表成员」与「该目录下真实存在的会话文件」，差集就是没分组的那些：
+
+```sh
+pnpm check:grouping:status                     # 默认检查 packages/bridge-dsh
+node scripts/check-grouping-status.mjs <dir>   # 指定配置目录
+```
+
+存量会话无法由桥接迁移（见上条），要让它出现在分组下只能由 GUI 侧处理或新建会话；脚本存在的意义是让这件事**可判定**，而不是靠猜。
 
 > 机器相关的绝对路径**不要**写进随包发布的 `cordis.patch.yml`，而应写进 profile 覆盖层（该文件后于所有 bundle 层应用，且随 profile 热加载）：
 >

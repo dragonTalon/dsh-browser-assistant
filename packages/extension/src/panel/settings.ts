@@ -14,11 +14,14 @@
 import { normalizeBridgeToken, resolveBridgeHost } from '@dsh-browser/protocol'
 import type { BridgeCaps } from '@dsh-browser/protocol'
 import { post } from './transport.ts'
+import { narrowPageSharing, type PageSharingPreference } from '../common/page-sharing.ts'
 
 /** Settings as the panel knows them (mirrors the background's persisted shape). */
 export interface PanelSettings {
   host: string
   token: string
+  /** Present on a status broadcast so the sharing control can mirror the real value. */
+  sharePageContent?: PageSharingPreference
 }
 
 /** Result of one connection test, as the background reports it. */
@@ -52,8 +55,11 @@ const testBtn = document.getElementById('settingsTest') as HTMLButtonElement
 const saveBtn = document.getElementById('settingsSave') as HTMLButtonElement
 const resetBtn = document.getElementById('settingsReset') as HTMLButtonElement
 const closeBtn = document.getElementById('settingsClose') as HTMLButtonElement
+const sharingEl = document.getElementById('settingsSharing') as HTMLSelectElement
 
 let current: PanelSettings = { host: '', token: '' }
+/** Mirror of the persisted sharing preference, so the control never shows a stale value. */
+let sharing: PageSharingPreference = 'auto'
 let testPending = false
 /** A save is in flight: awaiting the background's receipt. */
 let applyPending = false
@@ -296,5 +302,29 @@ export function initSettings(): void {
   testBtn.addEventListener('click', runTest)
   saveBtn.addEventListener('click', runSave)
   resetBtn.addEventListener('click', runReset)
+  // Applied on change rather than on save: the preference takes effect on the
+  // next tool call, so folding it into a connection reconnect would be a lie
+  // about when it applies.
+  sharingEl.addEventListener('change', () => {
+    setPageSharing(sharingEl.value)
+    post({ type: 'page-sharing.set', value: sharing })
+  })
   renderEffective()
+  renderSharing()
+}
+
+/**
+ * Adopt the background's sharing preference and reflect it in the control.
+ *
+ * Called from the status broadcast, which is how a change made elsewhere — the
+ * approval dialog's "总是允许读取" — becomes visible and reversible here.
+ * @param value - the persisted preference.
+ */
+export function setPageSharing(value: unknown): void {
+  sharing = narrowPageSharing(value) ?? 'auto'
+  renderSharing()
+}
+
+function renderSharing(): void {
+  if (sharingEl.value !== sharing) sharingEl.value = sharing
 }

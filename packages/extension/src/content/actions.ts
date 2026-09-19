@@ -157,6 +157,65 @@ function setNativeValue(input: HTMLInputElement | HTMLTextAreaElement, value: st
   input.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+/**
+ * Pause that lets a rich editor adopt the caret this script just placed.
+ *
+ * An editor binds its own selection to the document's and learns about a
+ * programmatic change from an asynchronous `selectionchange`, so an insertion
+ * dispatched in the same task as `focus()` arrives before that sync and is
+ * dropped.
+ */
+const CARET_ADOPT_MS = 32
+
+/**
+ * Put the document selection inside a contenteditable host: its whole content
+ * when replacing, otherwise a caret collapsed at the end.
+ * @param el - the contenteditable host.
+ * @param whole - select everything instead of collapsing to the end.
+ */
+function selectEditableContent(el: HTMLElement, whole: boolean): void {
+  const selection = el.ownerDocument.getSelection()
+  if (selection === null) return
+  const range = el.ownerDocument.createRange()
+  range.selectNodeContents(el)
+  if (!whole) range.collapse(false)
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+/**
+ * Insert text into a contenteditable host through the browser's own editing
+ * command.
+ *
+ * Rich editors (the dsh composer runs Lexical; ProseMirror and Slate behave the
+ * same way) keep a document model of their own and ignore a direct
+ * `textContent` write: their next reconcile drops the stray text, and their
+ * model — which owns the submit button's enabled state — never sees it, so the
+ * action could report success for text the page never accepted.
+ * `execCommand('insertText')` is the one insertion the browser performs itself,
+ * and the only one that emits the trusted `beforeinput`/`input` pair those
+ * editors do listen for.
+ * @param el - the contenteditable host.
+ * @param text - text to insert.
+ * @param replace - replace the host's whole content instead of appending.
+ * @returns whether the page took the text (hosts without an editing command,
+ * such as jsdom, fall back to the DOM write in the caller).
+ */
+async function typeIntoContentEditable(el: HTMLElement, text: string, replace: boolean): Promise<boolean> {
+  el.focus()
+  selectEditableContent(el, replace)
+  await sleep(CARET_ADOPT_MS)
+  const command = el.ownerDocument.execCommand
+  if (typeof command !== 'function') return false
+  command.call(el.ownerDocument, 'insertText', false, text)
+  // The command reports that it ran, not what the page did with it: a host with
+  // no editing context (an unfocused document, a read-only editor) accepts the
+  // call and drops the text. Read the content back so a silent no-op takes the
+  // DOM-write path instead of being reported as an accepted insertion.
+  await sleep(0)
+  return (el.textContent ?? '').includes(text)
+}
+
 /** Action implementations; each returns a text result. */
 export interface ActionContext {
   ids: ElementIds
@@ -165,34 +224,36 @@ export interface ActionContext {
   includePageDelta?: boolean
 }
 
+/** One action implementation: wire args in, text result out. */
+type ActionImpl = (args: Record<string, unknown>, ctx: ActionContext) => ActionResult | Promise<ActionResult>
+
+/**
+ * Implementation dispatch keyed by wire action name. The keys are the same
+ * names the shared browser-tool registry declares (the registry's name is the
+ * wire name), so a tool added to the registry but missing here fails at call
+ * time with a stable error instead of executing the wrong handler.
+ */
+const ACTION_IMPLS: Readonly<Record<string, ActionImpl>> = {
+  browser_snapshot: snapshotAction,
+  browser_click: clickAction,
+  browser_type: typeAction,
+  browser_press: pressAction,
+  browser_scroll: scrollAction,
+  browser_navigate: navigateAction,
+  browser_back: (_args, _ctx) => historyAction(-1),
+  browser_forward: (_args, _ctx) => historyAction(1),
+  browser_reload: () => reloadAction(),
+  browser_get_text: getTextAction,
+  browser_wait: waitAction,
+}
+
 /** Run one named action with its args. */
 export async function runAction(action: string, args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
-  switch (action) {
-    case 'browser_snapshot':
-      return snapshotAction(args, ctx)
-    case 'browser_click':
-      return clickAction(args, ctx)
-    case 'browser_type':
-      return typeAction(args, ctx)
-    case 'browser_press':
-      return pressAction(args, ctx)
-    case 'browser_scroll':
-      return scrollAction(args, ctx)
-    case 'browser_navigate':
-      return navigateAction(args)
-    case 'browser_back':
-      return historyAction(-1)
-    case 'browser_forward':
-      return historyAction(1)
-    case 'browser_reload':
-      return reloadAction()
-    case 'browser_get_text':
-      return getTextAction(args)
-    case 'browser_wait':
-      return waitAction(args, ctx)
-    default:
-      throw new ActionError('bad-args', `Unknown action: ${action}`)
+  const impl = ACTION_IMPLS[action]
+  if (impl === undefined) {
+    throw new ActionError('bad-args', `Unknown action: ${action}`)
   }
+  return impl(args, ctx)
 }
 
 function snapshotAction(args: Record<string, unknown>, ctx: ActionContext): ActionResult {
@@ -296,20 +357,27 @@ async function typeAction(args: Record<string, unknown>, ctx: ActionContext): Pr
   if (text === '') throw new ActionError('bad-args', 'text must not be empty.')
   const replace = args.replace === true
   const el = elementOrThrow(ctx.ids, index)
-  const contentEditable = el instanceof HTMLElement && el.isContentEditable
-  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || contentEditable)) {
+  const editableHost = el instanceof HTMLElement && el.isContentEditable ? el : null
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || editableHost !== null)) {
     throw new ActionError('action-failed', `Element [${index}] is not editable (${el.tagName.toLowerCase()}).`)
   }
-  if (contentEditable) {
-    if (replace) el.textContent = ''
-    el.textContent = `${el.textContent ?? ''}${text}`
-    el.dispatchEvent(new Event('input', { bubbles: true }))
+  // Only the DOM-write fallback needs to say so: an accepted insertion needs no
+  // caveat, and a caveat on every message would train the model to ignore it.
+  let note = ''
+  if (editableHost !== null) {
+    const inserted = await typeIntoContentEditable(editableHost, text, replace)
+    if (!inserted) {
+      if (replace) editableHost.textContent = ''
+      editableHost.textContent = `${editableHost.textContent ?? ''}${text}`
+      editableHost.dispatchEvent(new Event('input', { bubbles: true }))
+      note = ' by writing the DOM directly; an editor with its own model may not have accepted it'
+    }
   } else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     if (replace) setNativeValue(el, '')
     setNativeValue(el, `${el.value}${text}`)
   }
   await waitForPageSettled(TYPE_SETTLE)
-  return withPageDelta(`Entered ${text.length} characters into [${index}].`, ctx)
+  return withPageDelta(`Entered ${text.length} characters into [${index}]${note}.`, ctx)
 }
 
 async function pressAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {

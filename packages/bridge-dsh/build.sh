@@ -5,16 +5,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Resolve esbuild: explicit override -> workspace install (CI / pnpm install)
-# -> local deepseek-harness checkout (offline fallback on the dev machine).
+# Resolve esbuild: explicit override -> workspace install (pnpm install, which
+# works offline against the local store with --frozen-lockfile --offline).
 if [ -n "${ESBUILD:-}" ]; then
   : # caller-provided
 elif [ -x ./node_modules/.bin/esbuild ]; then
   ESBUILD=./node_modules/.bin/esbuild
-elif [ -x /Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild ]; then
-  ESBUILD=/Users/dragon/Documents/github/deepseek-harness/node_modules/.bin/esbuild
 else
-  echo "error: esbuild not found (run pnpm install, or set ESBUILD)" >&2
+  echo "error: esbuild not found (run pnpm install --offline, or set ESBUILD)" >&2
   exit 1
 fi
 rm -rf lib

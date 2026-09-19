@@ -6,13 +6,15 @@
  * @module
  */
 
-import type { BridgeState } from '../background/bridge.ts'
+import type { BridgeState } from '../common/connection-state.ts'
+import { BRIDGE_SESSION_PERMISSION_EVENT as SESSION_PERMISSION_EVENT } from '@dsh-browser/protocol'
 import { eventSeq } from '../common/index.ts'
 import { setMessageListener, post, rpc, settleRpcResult } from './transport.ts'
 import { setStatus, setActivePage } from './status.ts'
 import * as log from './log.ts'
 import * as conversation from './conversation.ts'
 import * as modelSelector from './model-selector.ts'
+import * as permissionSelector from './permission-selector.ts'
 import * as sessionSelector from './session-selector.ts'
 import * as region from './region.ts'
 import * as question from './question.ts'
@@ -137,6 +139,11 @@ function handleEvent(serverFrame: unknown): void {
     question.showQuestion((f as { rpcId?: unknown }).rpcId, f.payload)
   } else if (f.method === 'question/resolved') {
     question.handleQuestionResolved()
+  } else if (f.method === SESSION_PERMISSION_EVENT) {
+    // The bridge announces a tier only after it actually changed, so a repeated
+    // value never reaches here — but a frame arriving mid-replay must be held
+    // so the replay's older projection baseline cannot overwrite it.
+    permissionSelector.applyPermissionEvent(f.payload, conversation.isReplaying())
   }
 }
 
@@ -159,6 +166,7 @@ function handleEvent(serverFrame: unknown): void {
 async function openSession(sessionId: string): Promise<void> {
   conversation.bindSession(sessionId)
   modelSelector.resetSelection()
+  permissionSelector.resetTier()
   conversation.beginReplay(sessionId)
   // `bindSession` already pointed the command menu at this session and dropped
   // the previous catalog, so only the re-read is left to kick off here.
@@ -182,6 +190,10 @@ async function openSession(sessionId: string): Promise<void> {
     // `model/selection` event inside the snapshot. Buffered live frames are
     // newer than both and are applied last, by `endReplay`.
     modelSelector.alignFromProjections(page)
+    permissionSelector.alignFromProjections(page)
+    // Baseline is in place: a tier announced while this replay was in flight is
+    // newer than it, so it is applied now rather than being lost.
+    permissionSelector.flushDeferred()
     for (const frame of conversation.endReplay(sessionId, maxSeq, page?.hasMore === true)) {
       handleSessionEvent(frame.event)
     }
@@ -226,6 +238,9 @@ function onPortMessage(message: unknown): void {
         // Decides whether a `forbidden` failure is explained as a remote
         // limitation rather than echoed as a bare code.
         errors.setRemoteConnection(s.settings.loopback !== true)
+        // Mirrors a sharing change made outside this control (the approval
+        // dialog), so the preference stays visible and reversible.
+        settings.setPageSharing(s.settings.sharePageContent)
       }
       // A saved configuration only counts as working once the bridge reports it
       // connected; until then the dialog waits (see settings.applyConnectionState).
@@ -233,6 +248,7 @@ function onPortMessage(message: unknown): void {
       const wasConnected = lastState === 'connected'
       lastState = s.state
       modelSelector.setConnected(s.state === 'connected')
+      permissionSelector.setConnected(s.state === 'connected')
       sessionSelector.setConnected(s.state === 'connected')
       slashCommand.setContext({ connected: s.state === 'connected' })
       if (s.state === 'connected') {
@@ -300,6 +316,7 @@ question.initQuestion()
 approval.initApproval()
 region.initRegion()
 modelSelector.initModelSelector()
+permissionSelector.initPermissionSelector()
 // The composer elements are injected rather than looked up inside the menu
 // module, so that module stays loadable — and therefore testable — outside a
 // browser. A selection only writes a line into the composer: it never re-reads
@@ -318,6 +335,11 @@ slashCommand.initSlashCommand(
 conversation.setSessionBindListener((sessionId) => {
   slashCommand.invalidate()
   if (sessionId !== null) void slashCommand.refreshCatalog()
+  // A session can be bound WITHOUT a history read: `ensureSession` creates one
+  // for the first send or the first model pick, and nothing replays it. The tier
+  // lives in that session's projection, so without this read the control would
+  // report "no tier available" for a session that has one.
+  permissionSelector.loadForSession(sessionId)
 })
 // A prompt materializes a cold session's Agent, so a catalog that session could
 // not answer before may resolve now. The conversation module only reports the
@@ -346,6 +368,7 @@ inputEl.addEventListener('keydown', (e) => {
 // here: the panel stays on "new session" until the user actually sends, so
 // opening it never litters dsh's session list.
 modelSelector.renderModelRow()
+permissionSelector.renderPermissionRow()
 sessionSelector.renderSessionRow(true)
 post({ type: 'request-status' })
 

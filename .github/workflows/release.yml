@@ -45,6 +45,17 @@ jobs:
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
+      # bridge-dsh's own tsc needs the dsh host framework's types
+      # (@deepseek-ai/*), which live in a local dsh installation
+      # (scripts/link-dsh-types.sh) and are not available on CI. The offline
+      # checks below bundle the REAL bridge-dsh sources, so its logic is still
+      # exercised; protocol + extension typecheck fully.
+      - name: Verify (typecheck + offline checks)
+        run: |
+          pnpm -C packages/protocol typecheck
+          pnpm -C packages/extension typecheck
+          node scripts/run-tests.mjs
+
       - name: Build
         run: bash packages/bridge-dsh/build.sh
 
@@ -125,6 +136,12 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify (typecheck + offline checks)
+        run: |
+          pnpm -C packages/protocol typecheck
+          pnpm -C packages/extension typecheck
+          node scripts/run-tests.mjs
 
       - name: Build
         run: bash packages/extension/build.sh

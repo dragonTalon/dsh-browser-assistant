@@ -9,8 +9,9 @@ context: |
 
   技术栈: TypeScript strict (ES2022 / ESM / verbatimModuleSyntax / noUncheckedIndexedAccess)、
   Node ^22、pnpm workspace (pnpm@11)、esbuild、Cordis 插件框架、Chrome MV3、ws。
-  本环境无 npm registry 访问:构建用本地 deepseek-harness checkout 里的 esbuild
-  (bash packages/bridge-dsh/build.sh、bash packages/extension/build.sh)。
+  依赖一律来自 workspace 安装(各包 package.json 的 devDependencies);本环境无 npm registry 访问时
+  用 pnpm install --frozen-lockfile --offline(走本地 store)恢复,不依赖仓库外 checkout。
+  项目内不得出现机器特定绝对路径(/Users/...)。
 
   三个包的分工(勿越界改动):
   - packages/protocol    两端共享的零依赖线协议(protocol.ts 是唯一真相源,两端 import 同一份文件,帧结构不可漂移)
@@ -22,14 +23,23 @@ context: |
   session/follow 订阅与断连回补、稳定元素编号、delta 快照、审批协调(读 auto-allow / 写 fail-closed)、
   隐私遮蔽、不可信内容边界(防提示注入)。
 
-  安全铁律: 写操作一律 fail-closed 人工审批;token 恒定时间校验;特权操作对非回环来源即使有 token 也拒绝;
+  安全铁律: 浏览器写操作(改页面/开网站)的授权按会话权限档位判定 ——
+  档位「仅可查看」一律拒绝且 MUST NOT 到达页面;档位「工作区内修改」fail-closed 人工审批
+  (无应答=拒绝,超时=拒绝);档位「完全权限」直接执行且不产生审批请求,该档位仅在用户每次显式
+  风险确认后可达。不可动内核: 档位由桥接从会话自身的旋钮事件(permission/preset + sandbox/mode +
+  approval/policy)折叠独立求解,投影只用于获知预设表与交叉核对;扩展上报的任何「已确认」
+  声明 MUST NOT 参与判定 —— 授权来源不可伪造。档位求解失败 MUST NOT 折算为任何档位(既不得回退
+  部署默认档位,也不得进入「无档位能力」降级),该次调用以稳定错误码显式失败且不产生审批请求。
+  其余边界不变: token 恒定时间校验;特权操作对非回环来源即使有 token 也拒绝;
   密码/卡号永不离开页面。任何变更不得削弱这些边界。
 
   文档与工件语言: 中文(RFC 2119 关键词 SHALL/MUST/MUST NOT 保留英文)。
   架构文档在 docs/(architecture.md、bridge-plugin.md、extension.md),改架构须同步更新。
 
-  验证手段: 仓库没有测试套件 — 只能 pnpm typecheck(tsc noEmit)+ 各包 build.sh 构建;
-  bridge 改动需重建 packages/bridge-dsh/lib/index.js 并重载 dsh 插件后在 Chrome 扩展面板实测。
+  验证手段: 统一入口 pnpm test(pnpm typecheck + scripts/run-tests.mjs 跑全部离线行为校验,
+  无需 dsh/Chrome/网络,esbuild 打包真实源码后在 Node 断言);pnpm test:e2e 需要本机运行中的 dsh;
+  保留 check:* 单跑别名。bridge 改动需重建 packages/bridge-dsh/lib/index.js 并重载 dsh 插件后
+  在 Chrome 扩展面板实测。发版必须走 scripts/tag-release.sh(测试全绿才打 tag)。
 
 # Per-artifact rules (optional)
 rules:

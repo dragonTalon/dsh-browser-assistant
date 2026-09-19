@@ -1,6 +1,6 @@
 {
   "name": "bridge-browser",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Chrome MV3 extension: side panel + text-only read/operate of a controlled tab through the dsh browser bridge",
   "license": "MIT",
   "private": true,

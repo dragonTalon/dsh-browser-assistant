@@ -4,7 +4,7 @@
  * @module
  */
 
-import type { BridgeState } from '../background/bridge.ts'
+import type { BridgeState } from '../common/connection-state.ts'
 
 const STATE_LABELS: Record<string, string> = {
   connected: '已连接 dsh',

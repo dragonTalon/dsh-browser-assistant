@@ -13,7 +13,7 @@
  */
 
 import { MAX_SCREENSHOT_BYTES } from '@dsh-browser/protocol'
-import type { RegionElement, RegionRect } from '../content/region.ts'
+import type { RegionElement, RegionRect } from '../common/region.ts'
 
 const CONTENT_SCRIPT_FILE = 'content.js'
 

@@ -1,21 +1,51 @@
 /** Pure authorization policy for model-requested browser tools. */
 
-import type { ToolCall } from './tools.ts'
-import type { TabFrame } from './frames.ts'
+import { DEFAULT_TOOL_CALL_POLICY, isPageReadTool, isStateChangingTool, type ToolCallPolicy } from '@dsh-browser/protocol'
+import type { TabFrame, ToolCall } from './types.ts'
 import type { ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale, type UiLocale } from '../i18n.ts'
 
-const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text'])
-const STATE_CHANGING_ACTIONS = new Set([
-  'browser_click',
-  'browser_type',
-  'browser_press',
-  'browser_navigate',
-  'browser_open_tab',
-  'browser_back',
-  'browser_forward',
-  'browser_reload',
-])
+/**
+ * Apply one call's solved authorization and produce the approval to raise, if
+ * any.
+ *
+ * The policy is the bridge's conclusion and is applied verbatim: this function
+ * never derives a tier, never reads local settings to widen it, and never
+ * treats an extension-side claim as authorization. An absent policy is read as
+ * `ask` — the pre-tier behavior — so an unknown or older bridge cannot open an
+ * unconfirmed action window. Refusal is NOT an outcome here: the bridge
+ * refuses a tier-forbidden call before it ever writes the frame, so no frame
+ * that reaches this function can carry a "refuse" meaning.
+ *
+ * The page-sharing boundary is deliberately NOT re-checked here. It is a
+ * privacy decision that runs before this gate and carries its own message;
+ * folding it in would report a private-page refusal as a missing approval.
+ *
+ * @param call - the tool call being gated.
+ * @param policy - the per-call policy from the frame.
+ * @param sharePageContent - the user's page-sharing preference (privacy axis).
+ * @param frames - known frames of the target tab, for prompt descriptions.
+ * @param locale - UI locale for the prompt copy.
+ * @returns the prompt to raise, or undefined when this call needs none.
+ */
+export function gateToolCall(
+  call: ToolCall,
+  policy: ToolCallPolicy | undefined,
+  sharePageContent: 'ask' | 'auto' | 'off',
+  frames: TabFrame[],
+  locale: UiLocale = getUiLocale(),
+): ApprovalPrompt | undefined {
+  if ((policy ?? DEFAULT_TOOL_CALL_POLICY) === 'auto') {
+    // Direct execution: no approval request is produced at all.
+    return undefined
+  }
+  return approvalPromptForCall(call, sharePageContent, frames, locale)
+}
+
+/** Whether this tool reads page content out to the model (registry-derived). */
+export function isPageRead(name: string): boolean {
+  return isPageReadTool(name)
+}
 
 /** Return an approval prompt, or undefined when this call needs no prompt. */
 export function approvalPromptForCall(
@@ -24,7 +54,7 @@ export function approvalPromptForCall(
   frames: TabFrame[],
   locale: UiLocale = getUiLocale(),
 ): ApprovalPrompt | undefined {
-  if (PAGE_READS.has(call.name)) {
+  if (isPageReadTool(call.name)) {
     if (sharePageContent !== 'ask') return undefined
     const targetFrames = call.name === 'browser_snapshot'
       ? frames
@@ -40,7 +70,7 @@ export function approvalPromptForCall(
     }
   }
 
-  if (!STATE_CHANGING_ACTIONS.has(call.name)) return undefined
+  if (!isStateChangingTool(call.name)) return undefined
   if (call.name === 'browser_open_tab') {
     const destination = originFromUrl(typeof call.args.url === 'string' ? call.args.url : '')
     return {

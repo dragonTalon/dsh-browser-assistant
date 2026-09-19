@@ -30,6 +30,7 @@ import {
   type BridgeFrame,
   type BridgeCaps,
   type ClientFrame,
+  type ToolCallPolicy,
   type ToolErrorCode,
 } from '@dsh-browser/protocol'
 import { verifyToken } from './token.ts'
@@ -177,6 +178,13 @@ interface PendingTool {
   resolve: (result: unknown) => void
   reject: (error: BridgeToolError) => void
   timer: NodeJS.Timeout
+  /**
+   * Owning Agent session, when the call carried one. Kept so a tier downgrade
+   * can withdraw exactly the calls it invalidates.
+   */
+  sessionId?: string
+  /** Settle this call as withdrawn, reusing the established cancel path. */
+  cancel: (error: BridgeToolError) => void
 }
 
 /** A socket that passed authentication and owns the single active slot. */
@@ -241,6 +249,8 @@ export class BridgeServer {
    * @param signal - caller cancellation (abort settles the call as cancelled).
    * @param timeoutMs - per-call budget; defaults to the plugin config value.
    * @param sessionId - optional owning Agent session for approval continuity.
+   * @param policy - solved per-call authorization; omitted when the connected
+   *   dsh exposes no tier capability, which the extension reads as `ask`.
    * @returns the extension's action result.
    * @throws BridgeToolError when no extension is connected, the call times
    *   out, is cancelled, or the extension reports a failure.
@@ -251,6 +261,7 @@ export class BridgeServer {
     signal: AbortSignal,
     timeoutMs: number = this.deps.toolTimeoutMs,
     sessionId?: string,
+    policy?: ToolCallPolicy,
   ): Promise<unknown> {
     const conn = this.current
     if (conn === null) {
@@ -286,7 +297,13 @@ export class BridgeServer {
         cancel(new BridgeToolError('timeout', `browser action "${name}" timed out after ${timeoutMs}ms`))
       }, timeoutMs)
       signal.addEventListener('abort', onAbort, { once: true })
-      this.pendingTools.set(id, { resolve, reject, timer })
+      this.pendingTools.set(id, {
+        resolve,
+        reject,
+        timer,
+        ...(sessionId === undefined ? {} : { sessionId }),
+        cancel,
+      })
       conn.ws.send(JSON.stringify({
         t: 'tool.call',
         id,
@@ -294,6 +311,7 @@ export class BridgeServer {
         args,
         expiresAt,
         ...(sessionId === undefined ? {} : { sessionId }),
+        ...(policy === undefined ? {} : { policy }),
       } satisfies BridgeFrame), (error) => {
         /* v8 ignore next -- teardown race: when the write fails, the socket's
         close handler settles the same call with the same code; the callback
@@ -302,6 +320,51 @@ export class BridgeServer {
           settle(new BridgeToolError('bridge-closed', `bridge socket failed before delivery: ${error.message}`))
         }
       })
+    })
+  }
+
+  /**
+   * Withdraw every in-flight call owned by one session, reusing the standard
+   * cancel path so a call paused on a user approval has that approval revoked
+   * before it settles locally.
+   *
+   * Used when a session's permission tier actually drops: the tier's meaning
+   * is "stop now", so letting a confirmation that is already on screen run to
+   * completion would contradict it. Rejected or ineffective switch requests
+   * never reach here — the caller only invokes this on an observed drop.
+   * @param sessionId - session whose pending calls are withdrawn.
+   * @returns how many calls were withdrawn.
+   */
+  cancelPendingForSession(sessionId: string): number {
+    let cancelled = 0
+    for (const [, pending] of [...this.pendingTools.entries()]) {
+      if (pending.sessionId !== sessionId) continue
+      pending.cancel(new BridgeToolError(
+        'action-failed',
+        'The session permission tier dropped while this browser action was awaiting approval; it was withdrawn.',
+      ))
+      cancelled += 1
+    }
+    return cancelled
+  }
+
+  /**
+   * Push one bridge-owned event to the connected extension, if any.
+   *
+   * Used for state that is not a session event: a tier change is a projection
+   * value, and the panel needs it live so a switch made in the dsh interface
+   * shows up without reopening the panel. Dropped silently when no extension
+   * is attached — the value is a current-state snapshot, so the extension
+   * catches up from its next history read rather than from a backfill.
+   * @param method - event method name (see the protocol constants).
+   * @param payload - JSON-serializable payload.
+   */
+  publishEvent(method: string, payload: unknown): void {
+    const conn = this.current
+    if (conn === null) return
+    sendFrame(conn.ws, {
+      t: 'event',
+      frame: { rpcId: randomUUID(), method, payload },
     })
   }
 

@@ -8,61 +8,27 @@
  * @module
  */
 
-import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@dsh-browser/protocol'
-import type { ToolError } from '@dsh-browser/protocol'
+import {
+  DEFAULT_SNAPSHOT_MAX_CHARS,
+  DEFAULT_TOOL_CALL_POLICY,
+  attachesPageDelta,
+  isNavigationCandidate,
+} from '@dsh-browser/protocol'
+import type { ToolCallPolicy, ToolError } from '@dsh-browser/protocol'
 import {
   allocateFrameBudgets,
   frameDocumentKey,
   frameOrigin,
   listTabFrames,
-  type TabFrame,
 } from './frames.ts'
+import type { ContentBudget, TabFrame, ToolAnswer, ToolCall } from './types.ts'
 import { wrapUntrustedContent } from '../common/tools/untrusted.ts'
-import { approvalPromptForCall } from './authorization.ts'
+import { approvalPromptForCall, gateToolCall, isPageRead } from './authorization.ts'
 import { waitForNextDocumentReady } from './navigation.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 
-/** A tool call from the bridge. */
-export interface ToolCall {
-  id: string
-  name: string
-  args: Record<string, unknown>
-  /** Server-authored wall-clock deadline; absent only in direct unit tests. */
-  expiresAt?: number
-  /** Owning Agent session, when supplied by a current bridge. */
-  sessionId?: string
-}
-
-/** The wire answer for one tool call. */
-export interface ToolAnswer {
-  ok: boolean
-  result?: unknown
-  error?: ToolError
-}
-
-/** Snapshot limits negotiated with the bridge and forwarded after lazy injection. */
-export interface ContentBudget {
-  maxItems: number
-  maxChars: number
-}
-
 const CONTENT_SCRIPT_FILE = 'content.js'
-const ACTION_DELTA_TOOLS = new Set([
-  'browser_click',
-  'browser_type',
-  'browser_press',
-  'browser_scroll',
-  'browser_wait',
-])
 const ACTION_DELTA_GUIDANCE = 'The page settled and its current changes are included below. Continue from this state; take another snapshot only when broader page context is needed.'
-const NAVIGATION_CANDIDATE_TOOLS = new Set([
-  'browser_click',
-  'browser_navigate',
-  'browser_back',
-  'browser_forward',
-  'browser_reload',
-  'browser_open_tab',
-])
 const NAVIGATION_SNAPSHOT_GUIDANCE = 'Navigation completed and the current page snapshot is included below. Use it directly instead of taking an immediate duplicate snapshot.'
 const pendingInjections = new Map<number, Promise<void>>()
 const snapshotDocumentsByTab = new Map<number, Map<number, string>>()
@@ -72,9 +38,9 @@ export function resetTabSnapshot(tabId: number): void {
   snapshotDocumentsByTab.delete(tabId)
 }
 
-/** Whether a successful tool may have changed the controlled tab's page URL. */
+/** Whether a successful tool may have changed the controlled tab's page URL (registry-derived). */
 export function isNavigationCandidateTool(name: string): boolean {
-  return NAVIGATION_CANDIDATE_TOOLS.has(name)
+  return isNavigationCandidate(name)
 }
 
 function isToolAnswer(value: unknown): value is ToolAnswer {
@@ -126,6 +92,37 @@ function unavailable(message: string): ToolAnswer {
 
 function cancelled(): ToolAnswer {
   return { ok: false, error: { code: 'bridge-closed', message: 'The browser tool call was cancelled.' } }
+}
+
+/**
+ * Refusal text for a page read the user marked private. Names the real control
+ * so the model can tell the user where to change it.
+ */
+const SHARING_DISABLED_MESSAGE =
+  'Page content sharing is set to "off", so page content may not be read. '
+  + 'Change it in the browser panel under Settings → 页面分享 (Page sharing).'
+
+/**
+ * Whether one call may carry the settled page changes back with its result.
+ *
+ * That extra content is a page READ, so it answers to the sharing preference
+ * alone — a permissive tier does not license exporting content the user marked
+ * private. A call that needed no approval at all may attach it (nothing is
+ * being exported behind the user's back); a call that was just approved may
+ * too, because the approval covered this document.
+ * @param call - the tool call being dispatched.
+ * @param policy - the per-call policy from the frame.
+ * @param sharePageContent - the user's page-sharing preference.
+ * @returns true when the page delta may be attached.
+ */
+function mayAttachPageDelta(
+  call: ToolCall,
+  policy: ToolCallPolicy | undefined,
+  sharePageContent: 'ask' | 'auto' | 'off',
+): boolean {
+  if (sharePageContent === 'off') return false
+  if ((policy ?? DEFAULT_TOOL_CALL_POLICY) === 'auto') return true
+  return sharePageContent === 'auto'
 }
 
 /** Preserve the factual approval outcome for the model without prescribing a response. */
@@ -319,7 +316,7 @@ async function dispatchOnce(
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
   const hasSnapshotBaseline = snapshotDocumentsByTab.get(tabId)?.get(frameId) === frameDocumentKey(frame)
-  const requestPageDelta = includeActionDelta && hasSnapshotBaseline && ACTION_DELTA_TOOLS.has(call.name)
+  const requestPageDelta = includeActionDelta && hasSnapshotBaseline && attachesPageDelta(call.name)
   const navigationWait = includeActionDelta && isNavigationCandidateTool(call.name)
     ? waitForNextDocumentReady(tabId, frameId, frame.documentId, signal)
     : undefined
@@ -397,14 +394,17 @@ export async function dispatchToolCall(
   signal?: AbortSignal,
   targetTab?: Pick<chrome.tabs.Tab, 'id' | 'url'>,
   targetStillAllowed?: () => boolean,
+  policy?: ToolCallPolicy,
 ): Promise<ToolAnswer> {
   if (call.name === 'browser_open_tab') {
     return unavailable('browser_open_tab must be dispatched through the background open-tab path.')
   }
   if (isCancelled(call, signal)) return cancelled()
   // Privacy boundary: with sharing off, no page content may leave the page.
-  if (sharePageContent === 'off' && (call.name === 'browser_snapshot' || call.name === 'browser_get_text')) {
-    return { ok: false, error: { code: 'action-failed', message: 'Page content sharing is disabled in Settings > Page content sharing.' } }
+  // Checked before the tier gate so a private page is reported as a privacy
+  // refusal rather than as a missing approval.
+  if (sharePageContent === 'off' && isPageRead(call.name)) {
+    return { ok: false, error: { code: 'action-failed', message: SHARING_DISABLED_MESSAGE } }
   }
   const tab = targetTab ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]
   if (isCancelled(call, signal)) return cancelled()
@@ -420,7 +420,7 @@ export async function dispatchToolCall(
   if (frameError !== undefined) return frameError
   const targetError = validateElementTarget(call, tab.id, frames)
   if (targetError !== undefined) return targetError
-  const approval = approvalPromptForCall(call, sharePageContent, frames)
+  const approval = gateToolCall(call, policy, sharePageContent, frames)
   if (approval !== undefined) {
     const authorization = authorize === undefined ? 'unavailable' : await authorize(approval)
     if (isCancelled(call, signal)) return cancelled()
@@ -451,7 +451,7 @@ export async function dispatchToolCall(
       effectiveBudget,
       signal,
       targetStillAllowed,
-      sharePageContent === 'auto',
+      mayAttachPageDelta(call, policy, sharePageContent),
     )
   } catch {
     if (isCancelled(call, signal)) return cancelled()
@@ -485,7 +485,7 @@ export async function dispatchToolCall(
         effectiveBudget,
         signal,
         targetStillAllowed,
-        sharePageContent === 'auto',
+        mayAttachPageDelta(call, policy, sharePageContent),
       )
     } catch {
       return unavailable('The content script could not be loaded on this page. Chrome internal and protected pages do not support browser operations.')
@@ -567,6 +567,7 @@ export async function dispatchOpenTab(
   signal: AbortSignal | undefined,
   bindCreatedTab: (tab: chrome.tabs.Tab) => boolean,
   targetStillAllowed: (tabId: number) => boolean,
+  policy?: ToolCallPolicy,
 ): Promise<ToolAnswer> {
   if (isCancelled(call, signal)) return cancelled()
   const parsed = parseHttpUrl(call.args.url)
@@ -574,7 +575,7 @@ export async function dispatchOpenTab(
     return { ok: false, error: { code: 'action-failed', message: 'url must be a complete http or https URL.' } }
   }
 
-  const approval = approvalPromptForCall(call, sharePageContent, [])
+  const approval = gateToolCall(call, policy, sharePageContent, [])
   if (approval !== undefined) {
     const authorization = authorize === undefined ? 'unavailable' : await authorize(approval)
     if (isCancelled(call, signal)) return cancelled()

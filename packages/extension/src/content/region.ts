@@ -18,29 +18,7 @@
 import { MAX_REGION_ELEMENTS } from '@dsh-browser/protocol'
 import { accessibleName, directText, isVisible, truncate } from './extract.ts'
 import { isSensitiveField } from './privacy.ts'
-
-/** Selection rectangle in viewport CSS pixels. */
-export interface RegionRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
-/** One intersecting element's structured description. */
-export interface RegionElement {
-  tag: string
-  id?: string
-  classes?: string
-  role?: string
-  /** Accessible name or text summary; sensitive fields carry no value. */
-  name: string
-  /** Coordinates relative to the selection's top-left, in CSS pixels. */
-  x: number
-  y: number
-  width: number
-  height: number
-}
+import type { RegionElement, RegionRect } from '../common/region.ts'
 
 /** The payload the content script reports after a completed drag. */
 export interface RegionSelection {

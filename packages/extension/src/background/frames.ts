@@ -10,15 +10,7 @@
  * @module
  */
 
-import type { ContentBudget } from './tools.ts'
-
-/** A live document frame in one tab. Main frame id is always zero. */
-export interface TabFrame {
-  frameId: number
-  parentFrameId: number
-  documentId?: string
-  url: string
-}
+import type { ContentBudget, TabFrame } from './types.ts'
 
 /** Per-frame limits whose sum never exceeds the negotiated tab budget. */
 export interface FrameBudget extends ContentBudget {}

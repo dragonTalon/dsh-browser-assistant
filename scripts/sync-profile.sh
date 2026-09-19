@@ -23,6 +23,14 @@ if [ ! -d "$(dirname "$TARGET_LIB")" ]; then
   exit 1
 fi
 
+# The profile lib may be hardlinked to the workspace build (a common dev
+# setup): cp refuses to copy a file onto itself, and no copy is needed then.
+if [ "$SOURCE_LIB" -ef "$TARGET_LIB" ]; then
+  echo "already linked: $TARGET_LIB is the workspace build (no copy needed)"
+  echo "next: restart dsh (or reload the plugin) so the new bundle is loaded"
+  exit 0
+fi
+
 cp "$TARGET_LIB" "$TARGET_LIB.bak-$(date +%Y%m%d)"
 cp "$SOURCE_LIB" "$TARGET_LIB"
 echo "synced -> $TARGET_LIB (backup alongside)"
