@@ -735,29 +735,48 @@ for (const [tier, label] of Object.entries(DSH_LABELS)) {
 }
 
 const panelHtml = readFileSync(join(repoRoot, 'packages/extension/panel/index.html'), 'utf8')
-const builtHtml = readFileSync(join(repoRoot, 'packages/extension/dist/panel/index.html'), 'utf8')
-for (const id of ['permissionSelect', 'permissionLock', 'fullAccessOverlay', 'fullAccessAck', 'settingsSharing']) {
+const CONTROL_IDS = ['permissionSelect', 'permissionLock', 'fullAccessOverlay', 'fullAccessAck', 'settingsSharing']
+for (const id of CONTROL_IDS) {
   check(
-    `构建后的面板含控件 #${id}`,
-    panelHtml.includes(`id="${id}"`) && builtHtml.includes(`id="${id}"`),
-    'a control present only in source never reaches the browser',
+    `面板源码含控件 #${id}`,
+    panelHtml.includes(`id="${id}"`),
+    'the control must exist in the panel markup the build copies',
   )
 }
 
-// The panel bundle must actually carry the selector module, not just the HTML.
-const builtPanelJs = readFileSync(join(repoRoot, 'packages/extension/dist/panel/panel.js'), 'utf8')
-check(
-  '构建后的面板 JS 含档位选择器逻辑',
-  builtPanelJs.includes('permissionSelect') && builtPanelJs.includes('permission.set'),
-  'the selector markup without its module would render but never work',
-)
-const builtBackground = readFileSync(join(repoRoot, 'packages/extension/dist/background.js'), 'utf8')
-check(
-  '构建后的扩展后台按帧内策略执行、且不自行拒绝',
-  builtBackground.includes('gateToolCall') && builtBackground.includes('DEFAULT_TOOL_CALL_POLICY')
-    && !builtBackground.includes('permission-tier-denied'),
-  'the background must apply the bridge policy verbatim; denial belongs to the bridge before the frame',
-)
+// The BUILT artifacts are asserted only when this checkout has them. `dist/`
+// is a build product and is absent on a clean CI checkout, so requiring it
+// would fail the release gate for a reason unrelated to the change. The source
+// contract above holds everywhere; these extra assertions catch "a control
+// present only in source never reached dist/", which is a local build fact.
+const distPanelHtml = join(repoRoot, 'packages/extension/dist/panel/index.html')
+if (existsSync(distPanelHtml)) {
+  const builtHtml = readFileSync(distPanelHtml, 'utf8')
+  for (const id of CONTROL_IDS) {
+    check(
+      `构建后的面板含控件 #${id}`,
+      builtHtml.includes(`id="${id}"`),
+      'a control present only in source never reaches the browser',
+    )
+  }
+
+  // The panel bundle must actually carry the selector module, not just the HTML.
+  const builtPanelJs = readFileSync(join(repoRoot, 'packages/extension/dist/panel/panel.js'), 'utf8')
+  check(
+    '构建后的面板 JS 含档位选择器逻辑',
+    builtPanelJs.includes('permissionSelect') && builtPanelJs.includes('permission.set'),
+    'the selector markup without its module would render but never work',
+  )
+  const builtBackground = readFileSync(join(repoRoot, 'packages/extension/dist/background.js'), 'utf8')
+  check(
+    '构建后的扩展后台按帧内策略执行、且不自行拒绝',
+    builtBackground.includes('gateToolCall') && builtBackground.includes('DEFAULT_TOOL_CALL_POLICY')
+      && !builtBackground.includes('permission-tier-denied'),
+    'the background must apply the bridge policy verbatim; denial belongs to the bridge before the frame',
+  )
+} else {
+  console.log('SKIP  构建产物断言\n        no build at packages/extension/dist (run: bash packages/extension/build.sh)')
+}
 
 // The profile copy is what a running dsh loads; a workspace build alone does
 // not reach it (scripts/sync-profile.sh exists for exactly this reason).

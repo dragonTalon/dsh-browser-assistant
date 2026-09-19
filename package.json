@@ -23,5 +23,8 @@
     "check:tool-registry": "node scripts/check-tool-registry.mjs",
     "check:adapter-seam": "node scripts/check-adapter-seam.mjs",
     "tier:switch": "node scripts/switch-tier.mjs"
+  },
+  "devDependencies": {
+    "ws": "^8.21.3"
   }
 }

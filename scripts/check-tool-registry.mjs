@@ -56,6 +56,7 @@ function build(relativePath, name, extraAliases = []) {
     `--outfile=${outfile}`,
     '--external:ws',
     `--alias:@dsh-browser/protocol=${protocolIndex}`,
+    ...HOST_ALIASES,
     ...extraAliases,
     '--log-level=error',
   ]
@@ -65,6 +66,22 @@ function build(relativePath, name, extraAliases = []) {
 }
 
 mkdirSync(outDir, { recursive: true })
+
+// The bridge is a dsh plugin, so its sources import `@deepseek-ai/*` packages
+// that exist only inside a dsh installation. These checks bundle the REAL
+// sources and must run on a checkout without dsh, so every host import
+// reachable from the bundled entry points is aliased to a stub — resolution
+// must never depend on a machine's dsh profile. `tools.ts` reaches
+// `@deepseek-ai/dsh-home-paths` through `server.ts` → `token.ts`, and
+// `defineTool` from `@deepseek-ai/dsh-tools` is the registration entry point.
+const dshToolsStub = join(outDir, 'stub-dsh-tools.mjs')
+writeFileSync(dshToolsStub, 'export function defineTool(definition) { return definition }\n')
+const dshHomePathsStub = join(outDir, 'stub-dsh-home-paths.mjs')
+writeFileSync(dshHomePathsStub, 'export function dshHomePath(...parts) { return parts.join("/") }\n')
+const HOST_ALIASES = [
+  `--alias:@deepseek-ai/dsh-tools=${dshToolsStub}`,
+  `--alias:@deepseek-ai/dsh-home-paths=${dshHomePathsStub}`,
+]
 
 let failures = 0
 function check(name, condition, detail) {
@@ -148,9 +165,6 @@ check('extension isNavigationCandidateTool === 注册表(全部名)',
 // Part 3: bridge tool definitions match the registry, and the unknown-tool
 // refusal fires before any frame.
 // ---------------------------------------------------------------------------
-const dshToolsStub = join(outDir, 'stub-dsh-tools.mjs')
-writeFileSync(dshToolsStub, 'export function defineTool(definition) { return definition }\n')
-
 async function registerTools(module) {
   const registered = []
   const dispatched = []
@@ -167,7 +181,7 @@ async function registerTools(module) {
 
 const exec = { agent: undefined, signal: new AbortController().signal }
 
-const realTools = await import(pathToFileURL(build('packages/bridge-dsh/src/tools.ts', 'bridge-tools', [`--alias:@deepseek-ai/dsh-tools=${dshToolsStub}`])).href)
+const realTools = await import(pathToFileURL(build('packages/bridge-dsh/src/tools.ts', 'bridge-tools')).href)
 const real = await registerTools(realTools)
 check('bridge 注册的工具名集合 === 注册表名集合',
   setEquals(new Set(real.registered.map((definition) => definition.name)), allNames),
@@ -201,7 +215,6 @@ writeFileSync(protocolShim, [
 ].join('\n'))
 
 const driftTools = await import(pathToFileURL(build('packages/bridge-dsh/src/tools.ts', 'bridge-tools-drift', [
-  `--alias:@deepseek-ai/dsh-tools=${dshToolsStub}`,
   `--alias:@dsh-browser/protocol=${protocolShim}`,
 ])).href)
 const drift = await registerTools(driftTools)

@@ -13,7 +13,7 @@
  * Usage: pnpm check:ordered-rpc      (no dsh, no Chrome, no network required)
  */
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -38,11 +38,18 @@ function resolveEsbuild() {
 }
 
 mkdirSync(outDir, { recursive: true })
+// The bridge is a dsh plugin, so `server.ts` reaches `@deepseek-ai/dsh-home-paths`
+// through `token.ts`. That package exists only inside a dsh installation, so the
+// REAL sources are bundled against a stub: resolution must not depend on a
+// machine's dsh profile, and nothing here calls into it.
+const dshHomePathsStub = join(outDir, 'stub-dsh-home-paths.mjs')
+writeFileSync(dshHomePathsStub, 'export function dshHomePath(...parts) { return parts.join("/") }\n')
 const outfile = join(outDir, 'server.mjs')
 const built = spawnSync(resolveEsbuild(), [
   join(repoRoot, 'packages/bridge-dsh/src/server.ts'),
   '--bundle', '--platform=node', '--format=esm', '--target=node22',
   '--external:ws',
+  `--alias:@deepseek-ai/dsh-home-paths=${dshHomePathsStub}`,
   `--outfile=${outfile}`,
   '--log-level=error',
 ], { stdio: 'inherit' })
