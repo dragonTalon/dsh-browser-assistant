@@ -11,7 +11,9 @@
  */
 
 import { rpc, post } from './transport.ts'
-import { ensureSession, appendSystem, setWorking, getActiveSessionId } from './conversation.ts'
+import { ensureSession, appendSystem, setWorking, getActiveSessionId, isBusy } from './conversation.ts'
+import { getActivePage } from './status.ts'
+import { panelPageContextGate, withRegionPageContext } from './page-context.ts'
 import { capabilityOf, effectiveSelection } from './model-selector.ts'
 import { formatRegionElement, wrapUntrustedContent, errorCode } from '../common/index.ts'
 import { buildRegionScreenshotText, buildRegionQuestionText } from '@dsh-browser/protocol'
@@ -98,13 +100,21 @@ function isImageUnsupported(error: unknown): boolean {
   return errorCode(error) === 'session/attachment-invalid'
 }
 
-/** Send the pending region: intent + cropped screenshot + element list. */
+/**
+ * Send the pending region: intent + cropped screenshot + element list.
+ *
+ * Refuses while the panel is busy, and refuses BEFORE the attachment is cleared:
+ * a refused crop stays pending so the user can send it once the turn ends,
+ * rather than being consumed by a gesture that produced nothing.
+ */
 export async function sendRegion(intent: string): Promise<void> {
   if (pendingRegion === null) return
+  if (isBusy()) return
   // Keep the attachment if there's no session yet, so it can be re-sent.
   if (!await ensureSession()) return
   const sid = getActiveSessionId()
   if (sid === null) return
+  if (isBusy()) return
   const region = pendingRegion
   const list = region.elements.map(formatRegionElement).join('\n')
   const screenshotText = buildRegionScreenshotText(wrapUntrustedContent(list, 8_000))
@@ -143,5 +153,6 @@ export async function sendRegion(intent: string): Promise<void> {
 }
 
 async function deliver(sid: string, content: PromptBlock[]): Promise<void> {
-  await rpc('session.prompt', { sessionId: sid, mode: 'queue', content })
+  const finalContent = withRegionPageContext(panelPageContextGate, sid, getActivePage(), content)
+  await rpc('session.prompt', { sessionId: sid, mode: 'queue', content: finalContent })
 }

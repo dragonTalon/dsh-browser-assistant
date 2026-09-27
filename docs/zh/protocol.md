@@ -12,7 +12,7 @@
 |---|---|
 | `protocol.ts` | 帧、常量、`parseBridgeFrame` 解析器与 `isServerFrame`/`isClientFrame` 类型守卫——**唯一真相源** |
 | `endpoint.ts` | 用户输入的地址（`10.0.0.7:3080`、`wss://…`）如何变成桥的 WebSocket URL |
-| `prompt.ts` | 框选截图 prompt 的组装 + 每条 `session.prompt` 前置的页面上下文前缀 |
+| `prompt.ts` | 框选截图 prompt 的组装 + 页面上下文前缀（面板按会话首条文本/区域每轮注入） |
 | `index.ts` | barrel 再导出（`export *`），因此移动模块不会牵动 importer |
 
 ## 传输
@@ -147,7 +147,7 @@
 `prompt.ts` 承载构造 `session.prompt` 的词汇，放在这里是为了让两半对分段标签保持一致：
 
 - `PromptImagePart`——面板可追加的一个图片部分：`type: 'image'`、取自 `PromptImageMediaType` 的 `mediaType`、规范 base64 的 `data`，以及可选的 `name`（永远不是文件系统路径）。
-- `buildPageContext(title, url)`——每条 prompt 前置的页面上下文前缀。
+- `buildPageContext(title, url)`——页面上下文前缀（面板按会话首条文本/区域每轮注入）。
 - `buildRegionScreenshotText(elementList)` / `buildRegionQuestionText(intent)`——框选截图 prompt 的固定分段布局；用户只框选未写文字时以 `EMPTY_INTENT` 占位。
 
 ## 铁律

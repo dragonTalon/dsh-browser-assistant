@@ -14,6 +14,8 @@
 
 import { BRIDGE_COMMANDS_EXECUTE_METHOD } from '@dsh-browser/protocol'
 import { rpc } from './transport.ts'
+import { getActivePage } from './status.ts'
+import { panelPageContextGate, withTextPageContext } from './page-context.ts'
 import { describeRpcError } from './errors.ts'
 import { appendLog } from './log.ts'
 import * as slashText from './slash-command-text.ts'
@@ -50,6 +52,18 @@ let interrupted = false
 let assistantRow: HTMLElement | null = null
 let assistantBuffer = ''
 let working: WorkingRow | null = null
+/** Last busy value published to the observer, so only real flips notify. */
+let lastBusy = false
+/** Notified when the busy state flips; the composition root renders it. */
+let busyListener: ((busy: boolean) => void) | null = null
+/**
+ * Session whose history is currently being replayed, or `null`.
+ *
+ * Declared beside the other panel state because {@link isBusy} reads it: the
+ * busy predicate must be answerable from module load, before the replay section
+ * below would otherwise have initialized it.
+ */
+let replaySessionId: string | null = null
 
 /** Append a row, keeping the working indicator pinned to the tail. */
 function appendRow(kind: 'user' | 'assistant' | 'system' | 'command', text: string): HTMLElement {
@@ -70,6 +84,40 @@ export function appendSystem(text: string): void {
   appendRow('system', text)
 }
 
+/**
+ * Whether the panel is busy, i.e. a submission must not be admitted.
+ *
+ * Deliberately derived from two conditions rather than stored, so there is only
+ * ever one answer to "is the panel busy":
+ * - the "正在分析" indicator, which strictly follows the turn lifecycle; and
+ * - an in-flight history replay, during which the transcript has been cleared
+ *   and the turn state has not been rebuilt from events yet. That window has no
+ *   conclusion about whether a turn is still running, so admitting a submission
+ *   there would queue a prompt the user never sees.
+ */
+export function isBusy(): boolean {
+  return working !== null || replaySessionId !== null
+}
+
+/**
+ * Register the single busy-state observer (set once by `main.ts`), which is what
+ * turns this derived state into the composer's submit gate. Like the other
+ * observers here it keeps the module free of any knowledge of the widgets that
+ * render it.
+ * @param listener - called only when the busy value actually flips.
+ */
+export function setBusyListener(listener: (busy: boolean) => void): void {
+  busyListener = listener
+}
+
+/** Publish the busy state if (and only if) it changed since the last publish. */
+function notifyBusyChange(): void {
+  const busy = isBusy()
+  if (busy === lastBusy) return
+  lastBusy = busy
+  busyListener?.(busy)
+}
+
 /** Toggle the "正在分析…" indicator; strictly follows the turn lifecycle. */
 export function setWorking(on: boolean): void {
   if (on) {
@@ -83,6 +131,7 @@ export function setWorking(on: boolean): void {
     working.el.remove()
     working = null
   }
+  notifyBusyChange()
 }
 
 /** Extract text from a content-block array (image/tool blocks are ignored). */
@@ -301,17 +350,27 @@ export async function ensureSession(): Promise<boolean> {
   return sessionPromise
 }
 
-/** Send a plain text prompt. */
+/**
+ * Send a plain text prompt.
+ *
+ * Refuses while the panel is busy. This is the collection point for every path
+ * that ends in an ordinary prompt (plain text, an unmatched slash line, a skill),
+ * so the rule "no second prompt mid-turn" holds no matter which caller got here —
+ * including one that slipped past the composer's synchronous gate during the
+ * window in which a cold session is still being created.
+ */
 export async function sendText(text: string): Promise<void> {
   if (text === '') return
   if (!await ensureSession()) return
+  if (isBusy()) return
   // Capture the identity: a session switch while creation/awaiting was in
   // flight must not redirect this message into another conversation.
   const sessionId = activeSessionId
   if (sessionId === null) return
   setWorking(true)
   try {
-    await rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }] })
+    const content = withTextPageContext(panelPageContextGate, sessionId, getActivePage(), [{ type: 'text', text }])
+    await rpc('session.prompt', { sessionId, mode: 'queue', content })
     // A first prompt on a cold session is what materializes its Agent, so a
     // catalog the cold session could not answer may resolve now. Emitted as a
     // neutral signal: this module must not depend on the slash-command feature.
@@ -390,8 +449,6 @@ export function clear(): void {
 // closes the window between the snapshot being taken upstream and its response
 // reaching the panel, which a plain clear+replay would silently erase.
 
-/** Session whose history is currently being replayed, or `null`. */
-let replaySessionId: string | null = null
 /** Live frames held back during the current replay, in arrival order. */
 let replayBuffer: BufferedSessionEvent[] = []
 
@@ -402,6 +459,10 @@ let replayBuffer: BufferedSessionEvent[] = []
  * nor flush anything.
  */
 export function beginReplay(sessionId: string): void {
+  // The identity is claimed BEFORE the clear: `clear()` drops the working
+  // indicator, and the busy predicate must already see "replaying" when that
+  // happens. Otherwise the gate would briefly reopen mid-reconnect — exactly the
+  // window in which a submission would be queued without the user seeing it.
   replaySessionId = sessionId
   replayBuffer = []
   clear()
@@ -445,6 +506,10 @@ export function endReplay(
     // buffer, or when a frame arrives without a usable sequence.
     appendLog({ time: Date.now(), level: 'warn', msg: `会话历史重放丢弃了 ${dropped} 条实时事件` })
   }
+  // The replay's conclusion decides the gate: re-solving here is what releases
+  // it when the history ended on `turn/end`, and what keeps it shut when the
+  // history ended mid-turn (or when a superseding replay is already in flight).
+  notifyBusyChange()
   return apply
 }
 

@@ -8,6 +8,13 @@ pipeline publishes the section whose `## <version>` heading matches the tag
 verbatim (see `scripts/release-notes.sh`), so `## Unreleased` is never published
 and an unpublished pending section stays at the top.
 
+## 0.4.0
+
+### 版本对齐 · Version alignment
+
+- **本次无代码变更 · No code changes in this release** — 桥接源码与 `bridge-dsh@0.3.0` **逐字节相同**，0.4.0 只是与 `bridge-browser@0.4.0` 对齐版本号。本次发布的两项改动（页面感知改为仅会话首条注入、面板提交闸门）全部落在扩展与共享协议侧，桥接的档位闸门、工具注册表与适配层均未改动；升级到本版与停留在 0.3.0 在行为上无差别。扩展侧变更请见 [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md) 与对应的 `bridge-browser@0.4.0`。
+  *The bridge source is **byte-identical** to `bridge-dsh@0.3.0`; 0.4.0 only aligns the version number with `bridge-browser@0.4.0`. Both changes in this release (page awareness becoming first-message-only, and the panel submit gate) live entirely in the extension and the shared protocol — the bridge's tier gate, tool registry and adapter layer are untouched, so upgrading or staying on 0.3.0 behaves identically. For the extension-side changes see [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md) and `bridge-browser@0.4.0`.*
+
 ## 0.3.0
 
 ### 新功能 · New features

@@ -33,7 +33,6 @@
 
 import {
   BRIDGE_CONFIG_PATH,
-  buildPageContext,
   DEFAULT_SNAPSHOT_MAX_CHARS,
   isRespondResult,
   normalizeBridgeToken,
@@ -570,14 +569,6 @@ chrome.runtime.onConnect.addListener((port) => {
       case 'rpc': {
         const rpcMsg = message as { id: string; method: string; payload?: unknown }
         emitLog('info', `面板 RPC: ${rpcMsg.method}`)
-        // 发消息时，把「用户当前停留的页面」注入进 prompt 上下文，让 dsh 有页面感知。
-        if (rpcMsg.method === 'session.prompt' && activePage !== null) {
-          const payload = (typeof rpcMsg.payload === 'object' && rpcMsg.payload !== null ? rpcMsg.payload : {}) as { content?: unknown[] }
-          if (Array.isArray(payload.content)) {
-            const pageCtx = buildPageContext(activePage.title, activePage.url)
-            payload.content = [{ type: 'text', text: pageCtx }, ...payload.content]
-          }
-        }
         void gatewayRpc(rpcMsg.method, rpcMsg.payload).then(
           (result) => { try { port.postMessage({ type: 'rpc.result', id: rpcMsg.id, ok: true, result }) } catch { /* closed */ } },
           (error: unknown) => {

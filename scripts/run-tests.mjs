@@ -42,6 +42,8 @@ const OFFLINE_CHECKS = [
   { name: 'permission-tiers', file: 'scripts/check-permission-tiers.mjs' },
   { name: 'tool-registry', file: 'scripts/check-tool-registry.mjs' },
   { name: 'adapter-seam', file: 'scripts/check-adapter-seam.mjs' },
+  { name: 'page-context-injection', file: 'scripts/check-page-context-injection.mjs' },
+  { name: 'composer-submit-gating', file: 'scripts/check-composer-submit-gating.mjs' },
   { name: 'endpoint-normalization', file: 'scripts/check-endpoint.mts', nodeArgs: ['--experimental-strip-types'] },
 ]
 

@@ -31,7 +31,7 @@
 | 导航 | `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` |
 | 读区域/等待 | `browser_get_text` / `browser_wait` |
 | 问用户 | dsh 的 `ask_user_question` 显示在面板，作答回传模型 |
-| 页面感知 | 扩展追踪活动标签页，把 URL/标题注入每条消息作为上下文 |
+| 页面感知 | 扩展追踪活动标签页，仅在会话首条消息注入 URL/标题作为上下文（区域截图每轮注入） |
 | 框选截图 | 用户从面板框选页面区域 → 裁剪截图 + 选区内 DOM 元素清单 → 发给视觉模型 |
 | 模型选择 | 面板连接后重拉 `model.catalog`；下拉框带能力标记（视觉/文本/未知）→ `session.selectModel` |
 | 会话选择 | 下拉列出 `session.list`，默认「新会话」；会话在首次发送、首次为本会话选模型、或在「新会话」下唤出 `/` 菜单时创建。选中历史会话即绑定并重放其历史——不再产生孤儿会话，也不走 `session.create` |
@@ -126,22 +126,22 @@ pnpm check:grouping:e2e         # 实机端到端：经真实桥发起 session.c
 
 | 产物 | 包名 | 版本 | Git tag |
 |---|---|---|---|
-| dsh bridge 插件 | `bridge-dsh` | `0.3.0` | `bridge-dsh@0.3.0` |
-| Chrome 扩展 | `bridge-browser` | `0.3.0` | `bridge-browser@0.3.0` |
+| dsh bridge 插件 | `bridge-dsh` | `0.4.0` | `bridge-dsh@0.4.0` |
+| Chrome 扩展 | `bridge-browser` | `0.4.0` | `bridge-browser@0.4.0` |
 
 打 tag 必须走发布门禁脚本——离线套件不通过就拒绝打 tag：
 
 ```sh
-bash scripts/tag-release.sh bridge-dsh 0.3.0               # typecheck + pnpm test 通过后才打 tag 并推送
-bash scripts/tag-release.sh bridge-browser 0.3.0 --e2e     # 另加实机 e2e（需要运行中的 dsh）
+bash scripts/tag-release.sh bridge-dsh 0.4.0               # typecheck + pnpm test 通过后才打 tag 并推送
+bash scripts/tag-release.sh bridge-browser 0.4.0 --e2e     # 另加实机 e2e（需要运行中的 dsh）
 ```
 
 脚本先核对版本号与对应包的 `package.json`（扩展还要核对 `manifest.json`）一致，再跑门禁，全部通过才创建并推送 tag；任何一步失败都不会产生 tag。推送后的 tag 触发下方流水线，流水线在构建前会**再跑一遍同一套离线套件**。
 
 桥插件已发布到 npm：[`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh)。每个 tag 也都有对应的 [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases)，附带构建产物，由打 tag 触发的流水线（`.github/workflows/release.yml`）自动生成：
 
-- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.3.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.3.0.tgz`）
-- `bridge-browser-0.3.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
+- `bridge-dsh` —— 从 npm 安装：`dsh plugin --profile web add -w "bridge-dsh@0.4.0" --config.minimumReleaseAge=0`（其 release 也附了 `bridge-dsh-0.4.0.tgz`）
+- `bridge-browser-0.4.0.zip` —— 扩展包；`chrome://extensions` → 「加载已解压的扩展程序」加载（或提交 Chrome 应用商店）
 
 每次发布的说明都是中英双语，由对应包的变更日志生成，因此不会与真正发布的内容脱节：[`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md)。
 

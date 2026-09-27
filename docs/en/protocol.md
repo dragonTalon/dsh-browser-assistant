@@ -12,7 +12,7 @@ The package is **zero-dependency** (types, constants and pure functions only) an
 |---|---|
 | `protocol.ts` | frames, constants, the `parseBridgeFrame` parser and the `isServerFrame`/`isClientFrame` guards — **the single source of truth** |
 | `endpoint.ts` | how a user-typed address (`10.0.0.7:3080`, `wss://…`) becomes a bridge WebSocket URL |
-| `prompt.ts` | region-capture prompt assembly + the page-context prefix prepended to every `session.prompt` |
+| `prompt.ts` | region-capture prompt assembly + the page-context prefix (prepended by the panel on a session's first text prompt and on every region capture) |
 | `index.ts` | barrel re-export (`export *`), so moving a module never touches importers |
 
 ## Transport
@@ -147,7 +147,7 @@ The host's own descriptors are the source of truth and these field names mirror 
 `prompt.ts` holds the vocabulary for building a `session.prompt`, kept here so both halves agree on the section labels:
 
 - `PromptImagePart` — one image part a panel may append: `type: 'image'`, a `mediaType` from `PromptImageMediaType`, canonical base64 `data`, and an optional `name` that is never a filesystem path.
-- `buildPageContext(title, url)` — the page-context prefix prepended to every prompt.
+- `buildPageContext(title, url)` — the page-context prefix (prepended by the panel on a session's first text prompt and on every region capture).
 - `buildRegionScreenshotText(elementList)` / `buildRegionQuestionText(intent)` — the fixed-section layout of a region capture, with `EMPTY_INTENT` standing in when the user sends a selection without text.
 
 ## Invariants

@@ -31,7 +31,7 @@ One pnpm workspace, two halves joined by one WebSocket:
 | Navigate | `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` |
 | Read region / wait | `browser_get_text` / `browser_wait` |
 | Ask the user | dsh `ask_user_question` renders in the panel; answers flow back to the model |
-| Page awareness | extension tracks the active tab and injects its URL/title into each prompt as context |
+| Page awareness | extension tracks the active tab and injects its URL/title into the session's first prompt as context (region captures inject every round) |
 | Region capture | user drag-selects a page region → cropped screenshot + DOM element list → sent to a vision-capable model |
 | Model selection | panel re-pulls `model.catalog` on connect; dropdown with capability badge (vision / text / unknown) → `session.selectModel` |
 | Session picker | dropdown over `session.list`, "new session" by default; a session is created on the first send, on the first model pick, or when the `/` menu is opened from "new session". Picking a past session binds it and replays its history — no orphans, no `session.create` |
@@ -126,22 +126,22 @@ The two halves are released independently:
 
 | Artifact | Package | Version | Git tag |
 |---|---|---|---|
-| dsh bridge plugin | `bridge-dsh` | `0.3.0` | `bridge-dsh@0.3.0` |
-| Chrome extension | `bridge-browser` | `0.3.0` | `bridge-browser@0.3.0` |
+| dsh bridge plugin | `bridge-dsh` | `0.4.0` | `bridge-dsh@0.4.0` |
+| Chrome extension | `bridge-browser` | `0.4.0` | `bridge-browser@0.4.0` |
 
 Tagging is done through the release gate, which refuses to tag unless the full offline suite passes:
 
 ```sh
-bash scripts/tag-release.sh bridge-dsh 0.3.0      # typecheck + pnpm test, then tags and pushes
-bash scripts/tag-release.sh bridge-browser 0.3.0 --e2e   # additionally runs the live checks (needs a running dsh)
+bash scripts/tag-release.sh bridge-dsh 0.4.0      # typecheck + pnpm test, then tags and pushes
+bash scripts/tag-release.sh bridge-browser 0.4.0 --e2e   # additionally runs the live checks (needs a running dsh)
 ```
 
 The script verifies the version against the package's `package.json` (and the extension's `manifest.json`), runs the gate, then creates and pushes the tag; any failure aborts without a tag. The pushed tag triggers the pipeline below, which runs the same offline suite once more before building.
 
 The bridge plugin is on npm: [`bridge-dsh`](https://www.npmjs.com/package/bridge-dsh). Each tag also has a matching [GitHub Release](https://github.com/dragonTalon/dsh-browser-assistant/releases) with its built artifact, produced automatically by the tag-triggered pipeline (`.github/workflows/release.yml`):
 
-- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.3.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.3.0.tgz` is also attached to its release)
-- `bridge-browser-0.3.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
+- `bridge-dsh` — install from npm: `dsh plugin --profile web add -w "bridge-dsh@0.4.0" --config.minimumReleaseAge=0` (a `bridge-dsh-0.4.0.tgz` is also attached to its release)
+- `bridge-browser-0.4.0.zip` — the extension bundle; load it via `chrome://extensions` → **Load unpacked** (or submit to the Chrome Web Store)
 
 Every release description is bilingual and is generated from that package's changelog, so the notes can never drift from what shipped: [`packages/bridge-dsh/CHANGELOG.md`](packages/bridge-dsh/CHANGELOG.md) · [`packages/extension/CHANGELOG.md`](packages/extension/CHANGELOG.md).
 

@@ -48,8 +48,17 @@ export function compactAddress(url: string): string {
   }
 }
 
+/** The last active page the background broadcast; retained for prompt assembly. */
+let activePage: { url: string; title: string } | null = null
+
+/** Read the active page the background last broadcast (null when none tracked). */
+export function getActivePage(): { url: string; title: string } | null {
+  return activePage
+}
+
 /** Update the "current page" line, or reset to a dash when none is tracked. */
 export function setActivePage(page: { url: string; title: string } | null): void {
+  activePage = page
   if (page !== null) {
     pageUrlEl.textContent = `${page.title || '(无标题)'} — ${page.url}`
   } else {

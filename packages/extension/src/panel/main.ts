@@ -33,6 +33,26 @@ let lastState: BridgeState = 'stopped'
 // ---- send ----
 
 /**
+ * Whether this submission gesture is an ordinary prompt, i.e. the kind the busy
+ * gate refuses.
+ *
+ * Deliberately NOT every gesture: a slash line that the bound session resolves is
+ * a command (an execute endpoint that opens no turn) or a skill (an ordinary
+ * prompt), and a pending region has its own attachment to deliver. Commands stay
+ * available mid-turn on purpose — adjusting the session's own state while the
+ * model works is a legitimate move, and locking them out would leave the composer
+ * with no way to act at all. Regions are admitted here because a crop is
+ * deliberately prepared in advance; the prompt they eventually send is refused by
+ * `sendRegion` itself when a turn is still running.
+ */
+function isOrdinaryPrompt(text: string, name: string | undefined): boolean {
+  if (name === undefined) return true
+  const entry = slashCommand.resolveSlashEntry(name)
+  // Unresolved: the line falls through to the model as ordinary text.
+  return entry === undefined || entry.kind === 'skill'
+}
+
+/**
  * Submit the composer.
  *
  * A draft takes the slash route only when its first token names something the
@@ -53,6 +73,13 @@ function send(): void {
     return
   }
   const name = submittedSlashName(text)
+  // The synchronous half of the busy gate. Correctness does not rest on it —
+  // `sendText` refuses on its own — but the disabled attribute only takes visual
+  // effect after a render, so this is what stops a double-click that lands before
+  // the button has repainted. It is sound only because everything it consults
+  // (`hasPendingRegion`, `submittedSlashName`, `resolveSlashEntry`) is a
+  // synchronous lookup: do NOT insert an await before this line.
+  if (conversation.isBusy() && isOrdinaryPrompt(text, name)) return
   if (name !== undefined) {
     submitSlash(text, name)
     return
@@ -308,6 +335,25 @@ function onPortMessage(message: unknown): void {
   }
 }
 
+// ---- send gate ----
+
+/**
+ * Bind the composer's submit gate to the panel's busy state.
+ *
+ * The gate is one-directional on purpose: `conversation` owns the busy state and
+ * knows nothing about this button, while this module owns the button and reads
+ * that state back. Rendering the disabled attribute is ALL this does — refusing a
+ * submission is `send()`'s synchronous check plus the chokepoints in `sendText`
+ * and `sendRegion`, so a missed render can never become a duplicate prompt.
+ */
+function initSubmitGate(): void {
+  conversation.setBusyListener((busy) => { sendBtn.disabled = busy })
+  // The observer only fires on a change, so the initial value is solved once at
+  // startup. An idle panel is not busy, which is also what the static markup
+  // already shows — this keeps the two in step if the panel ever boots mid-turn.
+  sendBtn.disabled = conversation.isBusy()
+}
+
 // ---- wiring ----
 
 setMessageListener(onPortMessage)
@@ -351,6 +397,7 @@ sessionSelector.initSessionSelector((sessionId) => {
   else void openSession(sessionId)
 })
 settings.initSettings()
+initSubmitGate()
 
 sendBtn.addEventListener('click', () => { void send() })
 inputEl.addEventListener('keydown', (e) => {
