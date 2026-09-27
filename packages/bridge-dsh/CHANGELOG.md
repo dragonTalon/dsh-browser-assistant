@@ -8,6 +8,16 @@ pipeline publishes the section whose `## <version>` heading matches the tag
 verbatim (see `scripts/release-notes.sh`), so `## Unreleased` is never published
 and an unpublished pending section stays at the top.
 
+## 0.4.1
+
+### 修复 · Bug fixes
+
+- **适配 dsh-api-gateway 0.1.7 的 `wireStream.open` 签名 · Align `wireStream.open` with dsh-api-gateway 0.1.7** — dsh 运行时升级到 `@deepseek-ai/dsh-api-gateway@0.1.7-rc.2` 后，`wireStream.open` 由 3 参 `(endpoint, payload, signal)` 变为 5 参 `(endpoint, payload, uplink, peer, signal)`；桥接层适配器仍按 3 参调用，`AbortSignal` 落入 `uplink` 位、真正的 `signal` 变成 `undefined`，`$events` 探测触发 `AbortSignal.any([undefined, …])` 抛 `TypeError: signals[0] is not of type AbortSignal`，插件在启动/重载时激活失败（`1 entry did not activate`）。现已把 5 处 `wireStream.open` 调用对齐到 5 参签名，并同步 `TypertGatewayLike` 类型声明。
+  *After the dsh runtime moved to `@deepseek-ai/dsh-api-gateway@0.1.7-rc.2`, `wireStream.open` changed from 3-arg `(endpoint, payload, signal)` to 5-arg `(endpoint, payload, uplink, peer, signal)`; the bridge adapter still called it with 3 args, so the `AbortSignal` landed in `uplink` and the real `signal` became `undefined` — the `$events` probe hit `AbortSignal.any([undefined, …])` and threw `TypeError: signals[0] is not of type AbortSignal`, failing plugin activation (`1 entry did not activate`). All 5 `wireStream.open` call sites now use the 5-arg signature, and the `TypertGatewayLike` type declaration is updated to match.*
+
+- **恢复会话/工作区流的取消信号 · Restore cancellation on session/workspace streams** — 同一信号错位此前还让 `session/follow` 与 `workspace/follow` 两条流**静默失去取消能力**（不报错但无法 abort）。本次一并修复，断开/超时取消订阅重新生效。
+  *The same misplacement had also silently dropped the abort signal from the `session/follow` and `workspace/follow` streams (no error, but nothing could cancel them). Restored now, so disconnect/timeout cancellation works again.*
+
 ## 0.4.0
 
 ### 版本对齐 · Version alignment

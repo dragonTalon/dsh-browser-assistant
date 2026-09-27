@@ -273,7 +273,7 @@ async function ensureRemoteEventSource(ctx: Context, gateway: TypertGatewayLike)
   const controller = new AbortController()
   let iterator: AsyncIterator<unknown> | undefined
   try {
-    const source = await gateway.wireStream.open('$events', { args: {} }, controller.signal)
+    const source = await gateway.wireStream.open('$events', { args: {} }, undefined, undefined, controller.signal)
     iterator = source[Symbol.asyncIterator]()
     const first = await iterator.next()
     if (!first.done && isRecord(first.value) && first.value.type === 'ready') return

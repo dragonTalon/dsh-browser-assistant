@@ -44,10 +44,15 @@ import type {
   SessionFollowSource,
 } from './host-streams.ts'
 
-/** Structural subset of dsh 0.1.2's Host TypertGateway service. */
+/**
+ * Structural subset of the Host TypertGateway service.
+ * Adapter target: dsh-api-gateway 0.1.7's `wireStream.open(endpoint, payload,
+ * uplink, peer, signal)` — the AbortSignal is the FIFTH positional argument
+ * (0.1.2's 3-arg `open(endpoint, payload, signal)` no longer applies).
+ */
 export interface TypertGatewayLike {
   readonly wireStream: {
-    open(endpoint: string, payload: unknown, signal: AbortSignal): Promise<AsyncIterable<unknown>>
+    open(endpoint: string, payload: unknown, uplink: unknown, peer: unknown, signal: AbortSignal): Promise<AsyncIterable<unknown>>
     failure(error: unknown): HostRpcFailure
   }
   invoke(request: {
@@ -215,6 +220,8 @@ class RemoteHostApi implements BrowserHostApi {
           },
         },
       },
+      undefined,
+      undefined,
       signal,
     )
     const iterator = source[Symbol.asyncIterator]()
@@ -234,7 +241,7 @@ class RemoteHostApi implements BrowserHostApi {
   private async openRemoteEvents(
     signal: AbortSignal,
   ): Promise<{ readonly clientId: string } & AsyncIterable<RemoteEvent>> {
-    const source = await this.gateway.wireStream.open('$events', { args: {} }, signal)
+    const source = await this.gateway.wireStream.open('$events', { args: {} }, undefined, undefined, signal)
     const iterator = source[Symbol.asyncIterator]()
     const first = await iterator.next()
     if (first.done || !isRemoteEventReady(first.value)) {
@@ -506,7 +513,7 @@ class RemoteHostApi implements BrowserHostApi {
     try {
       const controller = new AbortController()
       const signal = AbortSignal.any([call.signal, controller.signal])
-      const source = await this.gateway.wireStream.open('workspace/follow', { args: {} }, signal)
+      const source = await this.gateway.wireStream.open('workspace/follow', { args: {} }, undefined, undefined, signal)
       const iterator = source[Symbol.asyncIterator]()
       try {
         const first = await iterator.next()
@@ -702,6 +709,8 @@ async function oneShotSessionSnapshot(
         },
       },
     },
+    undefined,
+    undefined,
     signal,
   )
   const iterator = source[Symbol.asyncIterator]()
